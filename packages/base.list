@@ -1,0 +1,37 @@
+# openRigOS base packages — installed on ALL targets
+
+# Core system
+sudo
+dbus
+udev
+
+# SSH
+openssh-server
+openssh-client
+
+# Networking
+iproute2
+iputils-ping
+net-tools
+
+# TLS / package management
+ca-certificates
+apt-utils
+apt-transport-https
+gnupg
+
+# Ham radio core library (rig control)
+libhamlib4
+hamlib-utils
+
+# Serial port support (radio CAT control, TNC, etc.)
+minicom
+
+# System utilities
+curl
+wget
+rsync
+htop
+tmux
+vim-tiny
+less

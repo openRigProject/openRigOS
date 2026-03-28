@@ -1,0 +1,7 @@
+[Match]
+Name=usb0
+
+[Network]
+# Static IP on USB gadget interface so your Mac can find it
+# consistently without DHCP on the host side.
+Address=10.55.0.1/24

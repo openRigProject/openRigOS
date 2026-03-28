@@ -1,0 +1,26 @@
+# openRigOS — Raspberry Pi Zero 2 W boot config
+
+# 64-bit kernel
+arm_64bit=1
+kernel=kernel8.img
+
+# Exact DTB for Zero 2 W
+device_tree=bcm2710-rpi-zero-2-w.dtb
+
+# Disable unused hardware (saves RAM and power)
+dtparam=audio=off
+camera_auto_detect=0
+display_auto_detect=0
+
+# UART serial console (essential for headless debugging)
+enable_uart=1
+
+# Move BT to mini-UART so PL011 is free for serial console
+dtoverlay=miniuart-bt
+
+# USB OTG gadget mode — virtual ethernet over the single USB port
+# Connect to Mac/Linux, get SSH without needing WiFi configured
+dtoverlay=dwc2
+
+# GPU memory — headless OS, give RAM to CPU
+gpu_mem=16
