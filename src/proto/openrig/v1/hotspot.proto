@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package openrig.v1;
+
+option go_package = "openrig/gen/openrig/v1;openrigv1";
+
+import "openrig/v1/device.proto"; // for Empty
+
+// ── Messages ──────────────────────────────────────────────────────────────
+
+message Talkgroup {
+  int32  tg   = 1;
+  int32  slot = 2;
+  string name = 3;
+}
+
+message DMRConfig {
+  bool              enabled     = 1;
+  int32             dmr_id      = 2;
+  int32             colorcode   = 3;
+  string            network     = 4; // "brandmeister"|"dmrplus"|"freedmr"|"tgif"|"systemx"|"xlx"|"custom"
+  string            server      = 5;
+  string            password    = 6;
+  repeated Talkgroup talkgroups = 7;
+}
+
+message YSFConfig {
+  bool   enabled     = 1;
+  string network     = 2; // "ysf"|"fcs"|"custom"
+  string reflector   = 3; // e.g. "AMERICA" for YSF, "FCS001" for FCS
+  string module      = 4; // FCS module letter "A"-"Z"
+  string suffix      = 5;
+  string description = 6;
+}
+
+message CrossModeConfig {
+  bool   ysf2dmr_enabled   = 1;
+  int32  ysf2dmr_talkgroup = 2;
+  bool   dmr2ysf_enabled   = 3;
+  string dmr2ysf_room      = 4;
+}
+
+message ModemConfig {
+  string type = 1; // e.g. "mmdvm_hs_hat", "zumspot", "dvmega"
+  string port = 2; // e.g. /dev/ttyAMA0
+}
+
+message HotspotConfig {
+  DMRConfig      dmr          = 1;
+  YSFConfig      ysf          = 2;
+  CrossModeConfig cross_mode  = 3;
+  ModemConfig    modem        = 4;
+  double         rf_frequency = 5; // MHz
+  double         tx_frequency = 6; // MHz
+}
+
+message UpdateHotspotRequest {
+  HotspotConfig config = 1;
+}
+
+message UpdateDmrIdRequest {
+  int32 dmr_id = 1;
+}
+
+message UpdateDmrIdResponse {}
+
+message GetServersRequest {
+  string network = 1; // "brandmeister"|"ysf"|"fcs"
+}
+
+message GetServersResponse {
+  repeated string servers = 1;
+}
+
+message LastHeardEntry {
+  string callsign  = 1;
+  string mode      = 2; // "DMR" | "YSF"
+  string info      = 3; // TG number for DMR, room name for YSF
+  string duration  = 4; // e.g. "12s"
+  string timestamp = 5; // RFC3339
+}
+
+// ── Service ───────────────────────────────────────────────────────────────
+
+service HotspotService {
+  rpc GetHotspot(Empty)                      returns (HotspotConfig);
+  rpc UpdateHotspot(UpdateHotspotRequest)    returns (HotspotConfig);
+  rpc UpdateDmrId(UpdateDmrIdRequest)        returns (UpdateDmrIdResponse);
+
+  // GetServers returns the server list for a given network.
+  // Returns hardcoded fallback immediately; live fetch warms the cache.
+  rpc GetServers(GetServersRequest)          returns (GetServersResponse);
+
+  // StreamLastHeard streams new last-heard entries as they appear.
+  rpc StreamLastHeard(Empty)                 returns (stream LastHeardEntry);
+}

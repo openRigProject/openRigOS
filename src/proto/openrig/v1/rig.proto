@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package openrig.v1;
+
+option go_package = "openrig/gen/openrig/v1;openrigv1";
+
+import "openrig/v1/device.proto"; // for Empty
+
+// ── Messages ──────────────────────────────────────────────────────────────
+
+message RigConfig {
+  bool   enabled         = 1;
+  int32  hamlib_model_id = 2;
+  string port            = 3;
+  int32  baud            = 4;
+  int32  data_bits       = 5;
+  int32  stop_bits       = 6;
+  string parity          = 7; // "none" | "even" | "odd"
+  string handshake       = 8; // "none" | "hardware" | "software"
+}
+
+message RigList {
+  repeated RigConfig rigs = 1;
+}
+
+message UpdateRigsRequest {
+  repeated RigConfig rigs = 1;
+}
+
+// ── Service ───────────────────────────────────────────────────────────────
+
+service RigService {
+  rpc GetRigs(Empty)                returns (RigList);
+  rpc UpdateRigs(UpdateRigsRequest) returns (RigList);
+}

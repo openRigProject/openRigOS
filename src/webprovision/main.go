@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -811,7 +812,13 @@ type liveStatus struct {
 
 func fetchLiveStatus() liveStatus {
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://localhost:7373/api/status")
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:7373/openrig.v1.DeviceService/GetStatus",
+		strings.NewReader("{}"))
+	if err != nil {
+		return liveStatus{}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != 200 {
 		return liveStatus{}
 	}
@@ -823,11 +830,11 @@ func fetchLiveStatus() liveStatus {
 	uptime := int(toFloat(data["uptime"]))
 	return liveStatus{
 		Callsign:   toString(data["callsign"]),
-		Type:       toString(data["type"]),
+		Type:       toString(data["deviceType"]),
 		Uptime:     formatUptime(uptime),
-		CPUPercent: toFloat(data["cpu_percent"]),
-		MemUsedMB:  int(toFloat(data["mem_used_mb"])),
-		MemTotalMB: int(toFloat(data["mem_total_mb"])),
+		CPUPercent: toFloat(data["cpuPercent"]),
+		MemUsedMB:  int(toFloat(data["memUsedMb"])),
+		MemTotalMB: int(toFloat(data["memTotalMb"])),
 		APIOnline:  true,
 	}
 }
@@ -872,7 +879,13 @@ type wifiEntry struct {
 
 func fetchWifiNetworks() ([]wifiEntry, string) {
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://localhost:7373/api/wifi")
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:7373/openrig.v1.WifiService/GetWifi",
+		strings.NewReader("{}"))
+	if err != nil {
+		return nil, "WiFi config unavailable"
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != 200 {
 		return nil, "WiFi config unavailable"
 	}
@@ -888,14 +901,17 @@ func fetchWifiNetworks() ([]wifiEntry, string) {
 
 func apiPutWifi(networks []wifiEntry) error {
 	payload := struct {
-		Networks []wifiEntry `json:"networks"`
-	}{Networks: networks}
+		Config struct {
+			Networks []wifiEntry `json:"networks"`
+		} `json:"config"`
+	}{}
+	payload.Config.Networks = networks
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest(http.MethodPut, "http://localhost:7373/api/wifi", bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:7373/openrig.v1.WifiService/UpdateWifi", bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -1172,14 +1188,14 @@ func handleWifiAdd(w http.ResponseWriter, r *http.Request) {
 		Priority: priority,
 	})
 
-	data, err := json.Marshal(map[string]any{"networks": putNets})
+	data, err := json.Marshal(map[string]any{"config": map[string]any{"networks": putNets}})
 	if err != nil {
 		log.Printf("WiFi add marshal error: %v", err)
 		http.Redirect(w, r, "/management", http.StatusSeeOther)
 		return
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest(http.MethodPut, "http://localhost:7373/api/wifi", bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:7373/openrig.v1.WifiService/UpdateWifi", bytes.NewReader(data))
 	if err != nil {
 		log.Printf("WiFi add request error: %v", err)
 		http.Redirect(w, r, "/management", http.StatusSeeOther)
@@ -1539,6 +1555,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
 
 <div class="toast" id="toast"></div>
 
+<script src="/wasm_exec.js"></script>
 <script>
 function showTab(name,e){
   document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
@@ -1552,30 +1569,26 @@ function toast(msg,isError){
   el.className='toast'+(isError?' error':'')+' show';
   setTimeout(function(){el.className='toast';},3000);
 }
-function api(method,path,body){
-  var opts={method:method,headers:{'Content-Type':'application/json'}};
-  if(body)opts.body=JSON.stringify(body);
-  return fetch(path,opts).then(function(r){
-    if(!r.ok)return r.json().then(function(d){throw new Error(d.error||'Request failed');});
-    return r.json();
-  });
+function formatUptime(s){
+  if(!s||s<60)return'< 1m';
+  var h=Math.floor(s/3600);var m=Math.floor((s%3600)/60);
+  if(h>0)return h+'h '+m+'m';
+  return m+'m';
 }
-function loadStatus(){
-  api('GET','/api/status').then(function(d){
-    document.getElementById('st-callsign').textContent=d.callsign||'--';
-    document.getElementById('st-hostname').textContent=d.hostname||'--';
-    document.getElementById('st-type').textContent=d.type||'--';
-    document.getElementById('st-version').textContent=d.version||'--';
-    document.getElementById('st-uptime').textContent=d.uptime||'--';
-    document.getElementById('st-provisioned').textContent=d.provisioned?'Yes':'No';
-    document.getElementById('status-badge').textContent=d.callsign?d.callsign+' \u00b7 '+d.type:'Not provisioned';
-  }).catch(function(){});
+function renderStatus(d){
+  document.getElementById('st-callsign').textContent=d.callsign||'--';
+  document.getElementById('st-hostname').textContent=d.hostname||'--';
+  document.getElementById('st-type').textContent=d.deviceType||'--';
+  document.getElementById('st-version').textContent=d.version||'--';
+  document.getElementById('st-uptime').textContent=formatUptime(d.uptime);
+  document.getElementById('st-provisioned').textContent=d.provisioned?'Yes':'No';
+  document.getElementById('status-badge').textContent=d.callsign?d.callsign+' \u00b7 '+d.deviceType:'Not provisioned';
 }
 function loadDmrServerList(network,preserveValue){
   var s=document.getElementById('dmr-server');
   var dl=document.getElementById('dmr-server-list');
   if(!preserveValue){s.value='';s.placeholder='Loading...';}
-  api('GET','/api/hotspot/servers?network='+encodeURIComponent(network)).then(function(d){
+  openrig.getServers(network).then(function(d){
     var servers=d.servers||[];
     dl.innerHTML=servers.map(function(sv){return'<option value="'+esc(sv)+'">';}).join('');
     if(!preserveValue&&servers.length>0)s.value=servers[0];
@@ -1587,7 +1600,7 @@ function loadYsfList(network,inputId,datalistId,preserveValue){
   var inp=document.getElementById(inputId);
   var dl=document.getElementById(datalistId);
   if(!preserveValue){inp.placeholder='Loading...';}
-  api('GET','/api/hotspot/servers?network='+encodeURIComponent(network)).then(function(d){
+  openrig.getServers(network).then(function(d){
     var items=d.servers||[];
     dl.innerHTML=items.map(function(v){return'<option value="'+esc(v)+'">';}).join('');
     if(!preserveValue&&!inp.value&&items.length>0)inp.value=items[0];
@@ -1603,23 +1616,24 @@ function onYsfNetworkChange(){
   else if(n==='fcs')loadYsfList('fcs','fcs-room','fcs-room-list',false);
 }
 function timeAgo(ts){var d=Math.floor((Date.now()-new Date(ts).getTime())/1000);if(d<60)return d+'s ago';if(d<3600)return Math.floor(d/60)+'m ago';if(d<86400)return Math.floor(d/3600)+'h ago';return Math.floor(d/86400)+'d ago';}
-function loadLastHeard(){
-  api('GET','/api/lastheard').then(function(d){
-    var entries=d.entries||[];
-    var tb=document.getElementById('lastHeardBody');
-    var tbl=document.getElementById('lastHeardTable');
-    var emp=document.getElementById('lastHeardEmpty');
-    if(!entries.length){tbl.style.display='none';emp.style.display='';tb.innerHTML='';return;}
-    tbl.style.display='';emp.style.display='none';
-    var html='';
-    entries.forEach(function(e){
-      var mc=e.mode==='DMR'?'color:#3b82f6':e.mode==='YSF'?'color:#22c55e':'';
-      html+='<tr><td>'+esc(e.callsign)+'</td><td style="'+mc+'">'+esc(e.mode)+'</td><td>'+esc(e.info)+'</td><td>'+esc(e.duration)+'</td><td>'+timeAgo(e.timestamp)+'</td></tr>';
-    });
-    tb.innerHTML=html;
-  }).catch(function(){});
+var lastHeardEntries=[];
+function appendOrUpdateLastHeard(e){
+  var tb=document.getElementById('lastHeardBody');
+  var tbl=document.getElementById('lastHeardTable');
+  var emp=document.getElementById('lastHeardEmpty');
+  var idx=-1;
+  for(var i=0;i<lastHeardEntries.length;i++){if(lastHeardEntries[i].callsign===e.callsign&&lastHeardEntries[i].mode===e.mode){idx=i;break;}}
+  if(idx>=0){lastHeardEntries.splice(idx,1);}
+  lastHeardEntries.unshift(e);
+  if(lastHeardEntries.length>50)lastHeardEntries.length=50;
+  tbl.style.display='';emp.style.display='none';
+  var html='';
+  lastHeardEntries.forEach(function(e){
+    var mc=e.mode==='DMR'?'color:#3b82f6':e.mode==='YSF'?'color:#22c55e':'';
+    html+='<tr><td>'+esc(e.callsign)+'</td><td style="'+mc+'">'+esc(e.mode)+'</td><td>'+esc(e.info)+'</td><td>'+esc(e.duration)+'</td><td>'+timeAgo(e.timestamp)+'</td></tr>';
+  });
+  tb.innerHTML=html;
 }
-var lastHeardInterval=setInterval(loadLastHeard,30000);
 var talkgroups=[];
 var tgNames={};
 function buildTGNames(){tgNames={};talkgroups.forEach(function(tg){if(tg.tg)tgNames[tg.tg]=tg.name||'';});}
@@ -1631,12 +1645,12 @@ function onModemTypeChange(){
   if(modemPorts[t])p.value=modemPorts[t];
 }
 function loadHotspot(){
-  api('GET','/api/hotspot').then(function(d){
+  openrig.getHotspot().then(function(d){
     var modem=d.modem||{};
     document.getElementById('modem-type').value=modem.type||'mmdvm_hs_hat';
     document.getElementById('modem-port').value=modem.port||'/dev/ttyAMA0';
-    document.getElementById('rf-frequency').value=d.rf_frequency||'';
-    document.getElementById('tx-frequency').value=d.tx_frequency||0;
+    document.getElementById('rf-frequency').value=d.rfFrequency||'';
+    document.getElementById('tx-frequency').value=d.txFrequency||0;
     document.getElementById('dmr-enabled').checked=d.dmr.enabled;
     document.getElementById('dmr-colorcode').value=d.dmr.colorcode||1;
     document.getElementById('dmr-network').value=d.dmr.network||'brandmeister';
@@ -1654,10 +1668,10 @@ function loadHotspot(){
     else{document.getElementById('ysf-reflector').value=d.ysf.reflector||'';loadYsfList('ysf','ysf-reflector','ysf-reflector-list',true);}
     onYsfNetworkChange();
     document.getElementById('ysf-description').value=d.ysf.description||'';
-    document.getElementById('ysf2dmr-enabled').checked=d.cross_mode.ysf2dmr_enabled;
-    document.getElementById('ysf2dmr-tg').value=d.cross_mode.ysf2dmr_talkgroup||'';
-    document.getElementById('dmr2ysf-enabled').checked=d.cross_mode.dmr2ysf_enabled;
-    document.getElementById('dmr2ysf-room').value=d.cross_mode.dmr2ysf_room||'';
+    document.getElementById('ysf2dmr-enabled').checked=d.crossMode.ysf2dmrEnabled;
+    document.getElementById('ysf2dmr-tg').value=d.crossMode.ysf2dmrTalkgroup||'';
+    document.getElementById('dmr2ysf-enabled').checked=d.crossMode.dmr2ysfEnabled;
+    document.getElementById('dmr2ysf-room').value=d.crossMode.dmr2ysfRoom||'';
   }).catch(function(){});
 }
 function renderTalkgroups(){
@@ -1678,8 +1692,8 @@ function saveHotspot(){
   var body={
     modem:{type:document.getElementById('modem-type').value,
       port:document.getElementById('modem-port').value},
-    rf_frequency:parseFloat(document.getElementById('rf-frequency').value)||0,
-    tx_frequency:parseFloat(document.getElementById('tx-frequency').value)||0,
+    rfFrequency:parseFloat(document.getElementById('rf-frequency').value)||0,
+    txFrequency:parseFloat(document.getElementById('tx-frequency').value)||0,
     dmr:{enabled:document.getElementById('dmr-enabled').checked,
       colorcode:parseInt(document.getElementById('dmr-colorcode').value)||1,
       network:document.getElementById('dmr-network').value,
@@ -1691,16 +1705,16 @@ function saveHotspot(){
       return{enabled:document.getElementById('ysf-enabled').checked,
       network:n,reflector:r,module:n==='fcs'?document.getElementById('fcs-module').value:'',
       description:document.getElementById('ysf-description').value}})(),
-    cross_mode:{ysf2dmr_enabled:document.getElementById('ysf2dmr-enabled').checked,
-      ysf2dmr_talkgroup:parseInt(document.getElementById('ysf2dmr-tg').value)||0,
-      dmr2ysf_enabled:document.getElementById('dmr2ysf-enabled').checked,
-      dmr2ysf_room:document.getElementById('dmr2ysf-room').value}
+    crossMode:{ysf2dmrEnabled:document.getElementById('ysf2dmr-enabled').checked,
+      ysf2dmrTalkgroup:parseInt(document.getElementById('ysf2dmr-tg').value)||0,
+      dmr2ysfEnabled:document.getElementById('dmr2ysf-enabled').checked,
+      dmr2ysfRoom:document.getElementById('dmr2ysf-room').value}
   };
-  api('PUT','/api/hotspot',body).then(function(){toast('Hotspot config saved');}).catch(function(e){toast(e.message,true);});
+  openrig.updateHotspot(body).then(function(){toast('Hotspot config saved');}).catch(function(e){toast(e.message,true);});
 }
 var wifiNets=[];
 function loadWifi(){
-  api('GET','/api/wifi').then(function(d){wifiNets=d.networks||[];renderWifiNets();}).catch(function(){});
+  openrig.getWifi().then(function(d){wifiNets=d.networks||[];renderWifiNets();}).catch(function(){});
 }
 function renderWifiNets(){
   var c=document.getElementById('wifi-nets');
@@ -1723,30 +1737,39 @@ function addWifiNetwork(){if(wifiNets.length>=5)return;wifiNets.push({ssid:'',se
 function removeWifi(i){wifiNets.splice(i,1);renderWifiNets();}
 function saveWifi(){
   var nets=wifiNets.map(function(n,i){return{ssid:n.ssid,password:n.password||'',security:n.security||'auto',priority:wifiNets.length-i};});
-  api('PUT','/api/wifi',{networks:nets}).then(function(){toast('WiFi config saved');}).catch(function(e){toast(e.message,true);});
+  openrig.updateWifi({networks:nets}).then(function(){toast('WiFi config saved');}).catch(function(e){toast(e.message,true);});
 }
 function restartSvc(name){
-  api('POST','/api/services/'+name+'/restart').then(function(){toast(name+' restarted');}).catch(function(e){toast(e.message,true);});
+  openrig.restartService(name).then(function(){toast(name+' restarted');}).catch(function(e){toast(e.message,true);});
 }
 function loadDevice(){
-  api('GET','/api/config').then(function(d){
+  openrig.getConfig().then(function(d){
     document.getElementById('dev-callsign').value=d.callsign||'';
     document.getElementById('dev-hostname').value=d.hostname||'';
     document.getElementById('dev-name').value=d.name||'';
-    document.getElementById('dev-grid').value=d.grid_square||'';
+    document.getElementById('dev-grid').value=d.gridSquare||'';
     document.getElementById('dev-timezone').value=d.timezone||'UTC';
   }).catch(function(){});
 }
 function saveDevice(){
   var body={callsign:document.getElementById('dev-callsign').value,hostname:document.getElementById('dev-hostname').value,
-    name:document.getElementById('dev-name').value,grid_square:document.getElementById('dev-grid').value,
+    name:document.getElementById('dev-name').value,gridSquare:document.getElementById('dev-grid').value,
     timezone:document.getElementById('dev-timezone').value};
-  api('PUT','/api/config',body).then(function(){toast('Device config saved');loadStatus();}).catch(function(e){toast(e.message,true);});
+  openrig.updateConfig(body).then(function(){toast('Device config saved');openrig.getStatus().then(renderStatus).catch(function(){});}).catch(function(e){toast(e.message,true);});
 }
 function esc(s){if(!s)return'';var d=document.createElement('div');d.appendChild(document.createTextNode(s));return d.innerHTML;}
-loadStatus();loadHotspot();loadLastHeard();loadWifi();loadDevice();
-document.getElementById('ysf2dmr-tg').addEventListener('input',updateTGName);
-setInterval(loadStatus,10000);
+function initPage(){
+  openrig.getStatus().then(renderStatus).catch(function(){});
+  openrig.streamStatus(renderStatus);
+  openrig.streamLastHeard(appendOrUpdateLastHeard);
+  loadHotspot();loadWifi();loadDevice();
+  document.getElementById('ysf2dmr-tg').addEventListener('input',updateTGName);
+}
+var go=new Go();
+WebAssembly.instantiateStreaming(fetch('/openrig.wasm'),go.importObject).then(function(result){
+  go.run(result.instance);
+  initPage();
+});
 </script>
 </body>
 </html>`))
@@ -1786,6 +1809,17 @@ func main() {
 		log.Fatalf("Cannot read %s: %v", configPath, err)
 	}
 
+	// Determine GOROOT for wasm_exec.js
+	goroot := os.Getenv("GOROOT")
+	if goroot == "" {
+		out, err := exec.Command("go", "env", "GOROOT").Output()
+		if err != nil {
+			log.Fatalf("Cannot determine GOROOT: %v", err)
+		}
+		goroot = strings.TrimSpace(string(out))
+	}
+	wasmExecPath := filepath.Join(goroot, "lib", "wasm", "wasm_exec.js")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/scan", handleScan)
@@ -1793,6 +1827,21 @@ func main() {
 	mux.HandleFunc("/management", handleManagement)
 	mux.HandleFunc("/hotspot", handleHotspotUI)
 	mux.HandleFunc("/api/", handleAPIProxy)
+	// ConnectRPC service paths (used by WASM client)
+	mux.HandleFunc("/openrig.v1.DeviceService/", handleAPIProxy)
+	mux.HandleFunc("/openrig.v1.HotspotService/", handleAPIProxy)
+	mux.HandleFunc("/openrig.v1.WifiService/", handleAPIProxy)
+	mux.HandleFunc("/openrig.v1.RigService/", handleAPIProxy)
+
+	// WASM client files
+	mux.HandleFunc("/wasm_exec.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		http.ServeFile(w, r, wasmExecPath)
+	})
+	mux.HandleFunc("/openrig.wasm", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/wasm")
+		http.ServeFile(w, r, "/tmp/openrig.wasm")
+	})
 
 	log.Printf("openRigOS web UI listening on %s", listenAddr)
 	if err := (&http.Server{Addr: listenAddr, Handler: mux}).ListenAndServe(); err != nil {

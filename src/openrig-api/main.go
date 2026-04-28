@@ -1,11 +1,12 @@
-// openRig Management API + Web UI
+// openRig Management API
 //
 // Runs permanently on port 7373 after provisioning.
-// REST API at /api/* and management web UI at /.
+// ConnectRPC services at /openrig.v1.*/.
 package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -22,6 +23,13 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"connectrpc.com/connect"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+
+	openrigv1 "openrig/gen/openrig/v1"
+	"openrig/gen/openrig/v1/openrigv1connect"
 )
 
 var (
@@ -30,22 +38,22 @@ var (
 	devMode    bool
 )
 
-// ── Config types ─────────────────────────────────────────────────────────
+// ── Config types (JSON file structs) ─────────────────────────────────────
 
-type Talkgroup struct {
+type jsonTalkgroup struct {
 	TG   int    `json:"tg"`
 	Slot int    `json:"slot"`
 	Name string `json:"name"`
 }
 
-type DMRConfig struct {
-	Enabled    bool        `json:"enabled"`
-	DMRID      int         `json:"dmr_id"`
-	ColorCode  int         `json:"colorcode"`
-	Network    string      `json:"network"`  // "brandmeister" | "dmrplus" | "freedmr" | "tgif" | "systemx" | "xlx" | "custom"
-	Server     string      `json:"server"`
-	Password   string      `json:"password"`
-	Talkgroups []Talkgroup `json:"talkgroups"`
+type jsonDMRConfig struct {
+	Enabled    bool            `json:"enabled"`
+	DMRID      int             `json:"dmr_id"`
+	ColorCode  int             `json:"colorcode"`
+	Network    string          `json:"network"`
+	Server     string          `json:"server"`
+	Password   string          `json:"password"`
+	Talkgroups []jsonTalkgroup `json:"talkgroups"`
 }
 
 var validDMRNetworks = map[string]bool{
@@ -63,11 +71,11 @@ var defaultDMRServers = map[string]string{
 	"custom":       "",
 }
 
-type YSFConfig struct {
+type jsonYSFConfig struct {
 	Enabled     bool   `json:"enabled"`
-	Network     string `json:"network"`   // "ysf" | "fcs" | "custom"
-	Reflector   string `json:"reflector"` // e.g. "AMERICA" for YSF, "FCS001" for FCS
-	Module      string `json:"module"`    // FCS module letter: "A"-"Z" (FCS only)
+	Network     string `json:"network"`
+	Reflector   string `json:"reflector"`
+	Module      string `json:"module"`
 	Suffix      string `json:"suffix"`
 	Description string `json:"description"`
 }
@@ -76,80 +84,43 @@ var validYSFNetworks = map[string]bool{
 	"ysf": true, "fcs": true, "custom": true,
 }
 
-type CrossMode struct {
+type jsonCrossMode struct {
 	YSF2DMREnabled   bool   `json:"ysf2dmr_enabled"`
 	YSF2DMRTalkgroup int    `json:"ysf2dmr_talkgroup"`
 	DMR2YSFEnabled   bool   `json:"dmr2ysf_enabled"`
 	DMR2YSFRoom      string `json:"dmr2ysf_room"`
 }
 
-type ModemConfig struct {
-	Type string `json:"type"` // e.g. "mmdvm_hs_hat", "zumspot", "dvmega"
-	Port string `json:"port"` // serial port, e.g. /dev/ttyAMA0
+type jsonModemConfig struct {
+	Type string `json:"type"`
+	Port string `json:"port"`
 }
 
-type HotspotConfig struct {
-	DMR         DMRConfig  `json:"dmr"`
-	YSF         YSFConfig  `json:"ysf"`
-	CrossMode   CrossMode  `json:"cross_mode"`
-	Modem       ModemConfig `json:"modem"`
-	RFFrequency float64    `json:"rf_frequency"` // MHz, e.g. 438.8000
-	TXFrequency float64    `json:"tx_frequency"` // MHz, if split from RX
+type jsonHotspotConfig struct {
+	DMR         jsonDMRConfig `json:"dmr"`
+	YSF         jsonYSFConfig `json:"ysf"`
+	CrossMode   jsonCrossMode `json:"cross_mode"`
+	Modem       jsonModemConfig `json:"modem"`
+	RFFrequency float64       `json:"rf_frequency"`
+	TXFrequency float64       `json:"tx_frequency"`
 }
 
-type WifiNetwork struct {
+type jsonWifiNetwork struct {
 	SSID     string `json:"ssid"`
 	Security string `json:"security"`
 	Priority int    `json:"priority"`
 	Password string `json:"password,omitempty"`
 }
 
-type WifiConfig struct {
-	Networks []WifiNetwork `json:"networks"`
-}
-
-type DeviceConfig struct {
-	Callsign   string `json:"callsign"`
-	Hostname   string `json:"hostname"`
-	Timezone   string `json:"timezone"`
-	Name       string `json:"name"`
-	GridSquare string `json:"grid_square"`
-}
-
-type StatusResponse struct {
-	Provisioned bool    `json:"provisioned"`
-	DeviceType  string  `json:"type"`
-	Callsign    string  `json:"callsign"`
-	Version     string  `json:"version"`
-	Hostname    string  `json:"hostname"`
-	Uptime      int     `json:"uptime"`
-	CPUPercent  float64 `json:"cpu_percent"`
-	MemTotalMB  int     `json:"mem_total_mb"`
-	MemUsedMB   int     `json:"mem_used_mb"`
-	DiskTotalGB float64 `json:"disk_total_gb"`
-	DiskUsedGB  float64 `json:"disk_used_gb"`
-}
-
-type Client struct {
-	Callsign  string `json:"callsign"`
-	Mode      string `json:"mode"`
-	LastHeard string `json:"last_heard"`
-	Duration  string `json:"duration"`
-}
-
-type RigConfig struct {
-	Enabled      bool   `json:"enabled"`
-	HamlibModelID int   `json:"hamlib_model_id"`
-	Port         string `json:"port"`
-	Baud         int    `json:"baud"`
-	DataBits     int    `json:"data_bits"`
-	StopBits     int    `json:"stop_bits"`
-	Parity       string `json:"parity"`
-	Handshake    string `json:"handshake"`
-}
-
-type RigListResponse struct {
-	Rigs []RigConfig `json:"rigs"`
+type jsonRigConfig struct {
+	Enabled       bool   `json:"enabled"`
+	HamlibModelID int    `json:"hamlib_model_id"`
+	Port          string `json:"port"`
+	Baud          int    `json:"baud"`
+	DataBits      int    `json:"data_bits"`
+	StopBits      int    `json:"stop_bits"`
+	Parity        string `json:"parity"`
+	Handshake     string `json:"handshake"`
 }
 
 var validBaudRates = map[int]bool{
@@ -190,7 +161,6 @@ func writeConfig(cfg map[string]any) error {
 	return os.WriteFile(configPath, data, 0644)
 }
 
-// nested sets a value at a dot-separated path in a nested map.
 func nested(m map[string]any, path string, value any) {
 	parts := strings.Split(path, ".")
 	for _, part := range parts[:len(parts)-1] {
@@ -204,7 +174,6 @@ func nested(m map[string]any, path string, value any) {
 	m[parts[len(parts)-1]] = value
 }
 
-// nestedGet retrieves a value at a dot-separated path. Returns nil if not found.
 func nestedGet(m map[string]any, path string) any {
 	parts := strings.Split(path, ".")
 	for _, part := range parts[:len(parts)-1] {
@@ -260,17 +229,14 @@ func getSystemMetrics() systemMetrics {
 
 	var m systemMetrics
 
-	// Uptime from /proc/uptime (first float = seconds since boot)
 	if data, err := os.ReadFile("/proc/uptime"); err == nil {
 		var secs float64
 		fmt.Sscanf(string(data), "%f", &secs)
 		m.Uptime = int(secs)
 	}
 
-	// CPU usage: two samples of /proc/stat 200ms apart
 	m.CPUPercent = readCPUPercent()
 
-	// Memory from /proc/meminfo
 	if f, err := os.Open("/proc/meminfo"); err == nil {
 		defer f.Close()
 		var memTotal, memAvailable int64
@@ -287,7 +253,6 @@ func getSystemMetrics() systemMetrics {
 		m.MemUsedMB = int((memTotal - memAvailable) / 1024)
 	}
 
-	// Disk usage via statfs
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs("/", &stat); err == nil {
 		bsize := uint64(stat.Bsize)
@@ -300,14 +265,12 @@ func getSystemMetrics() systemMetrics {
 	return m
 }
 
-// readCPUPercent samples /proc/stat twice with a 200ms gap.
 func readCPUPercent() float64 {
 	parse := func() (idle, total uint64, ok bool) {
 		data, err := os.ReadFile("/proc/stat")
 		if err != nil {
 			return 0, 0, false
 		}
-		// First line: cpu  user nice system idle iowait irq softirq steal
 		line := strings.SplitN(string(data), "\n", 2)[0]
 		fields := strings.Fields(line)
 		if len(fields) < 5 || fields[0] != "cpu" {
@@ -320,7 +283,7 @@ func readCPUPercent() float64 {
 				continue
 			}
 			sum += v
-			if i == 3 { // idle is the 4th numeric field (index 3)
+			if i == 3 {
 				idle = v
 			}
 		}
@@ -358,7 +321,7 @@ var validServices = map[string]string{
 	"ysfgateway": "openrig-ysfgateway.service",
 }
 
-func restartService(name string) error {
+func doRestartService(name string) error {
 	if devMode {
 		log.Printf("[dev] restartService(%q) skipped", name)
 		return nil
@@ -374,7 +337,7 @@ func restartService(name string) error {
 
 var wpaConfPath = "/etc/wpa_supplicant/wpa_supplicant.conf"
 
-func writeWPAConf(networks []WifiNetwork, country string) error {
+func writeWPAConf(networks []*openrigv1.WifiNetwork, country string) error {
 	if devMode {
 		log.Printf("[dev] writeWPAConf(%d networks, country=%q) skipped", len(networks), country)
 		return nil
@@ -382,452 +345,40 @@ func writeWPAConf(networks []WifiNetwork, country string) error {
 	var buf strings.Builder
 	fmt.Fprintf(&buf, "country=%s\nctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\n\n", country)
 	for _, n := range networks {
-		if n.SSID == "" || n.Password == "" {
+		if n.Ssid == "" || n.Password == "" {
 			continue
 		}
 		switch n.Security {
 		case "wpa3":
 			fmt.Fprintf(&buf,
 				"network={\n    ssid=%q\n    key_mgmt=SAE\n    psk=%q\n    ieee80211w=2\n    priority=%d\n}\n\n",
-				n.SSID, n.Password, n.Priority)
+				n.Ssid, n.Password, n.Priority)
 		case "wpa2":
 			fmt.Fprintf(&buf,
 				"network={\n    ssid=%q\n    key_mgmt=WPA-PSK\n    psk=%q\n    priority=%d\n}\n\n",
-				n.SSID, n.Password, n.Priority)
+				n.Ssid, n.Password, n.Priority)
 		default:
 			fmt.Fprintf(&buf,
 				"network={\n    ssid=%q\n    key_mgmt=WPA-PSK SAE\n    psk=%q\n    ieee80211w=1\n    priority=%d\n}\n\n",
-				n.SSID, n.Password, n.Priority)
+				n.Ssid, n.Password, n.Priority)
 		}
 	}
 	return os.WriteFile(wpaConfPath, []byte(buf.String()), 0600)
 }
 
-// ── JSON response helpers ────────────────────────────────────────────────
+// ── Network status helpers ───────────────────────────────────────────────
 
-func jsonOK(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
-}
+func getNetworkStatus() *openrigv1.NetworkStatus {
+	ns := &openrigv1.NetworkStatus{}
 
-func jsonError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
-}
-
-// ── API handlers ─────────────────────────────────────────────────────────
-
-func handleStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		jsonError(w, 405, "method not allowed")
-		return
-	}
-	cfg, err := readConfig()
-	if err != nil {
-		jsonError(w, 500, "cannot read config")
-		return
-	}
-	m := getSystemMetrics()
-	jsonOK(w, StatusResponse{
-		Provisioned: getBool(cfg, "openrig.device.provisioned"),
-		DeviceType:  getString(cfg, "openrig.device.type", "unconfigured"),
-		Callsign:    getString(cfg, "openrig.operator.callsign", ""),
-		Version:     getString(cfg, "openrig.version", "0.1.0"),
-		Hostname:    getString(cfg, "openrig.device.hostname", "openrig-config"),
-		Uptime:      m.Uptime,
-		CPUPercent:  m.CPUPercent,
-		MemTotalMB:  m.MemTotalMB,
-		MemUsedMB:   m.MemUsedMB,
-		DiskTotalGB: m.DiskTotalGB,
-		DiskUsedGB:  m.DiskUsedGB,
-	})
-}
-
-func handleConfig(w http.ResponseWriter, r *http.Request) {
-	cfg, err := readConfig()
-	if err != nil {
-		jsonError(w, 500, "cannot read config")
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		jsonOK(w, DeviceConfig{
-			Callsign:   getString(cfg, "openrig.operator.callsign", ""),
-			Hostname:   getString(cfg, "openrig.device.hostname", ""),
-			Timezone:   getString(cfg, "openrig.device.timezone", "UTC"),
-			Name:       getString(cfg, "openrig.operator.name", ""),
-			GridSquare: getString(cfg, "openrig.operator.grid_square", ""),
-		})
-
-	case http.MethodPut:
-		var req DeviceConfig
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			jsonError(w, 400, "invalid JSON")
-			return
-		}
-		if req.Callsign != "" {
-			nested(cfg, "openrig.operator.callsign", strings.ToUpper(req.Callsign))
-		}
-		if req.Hostname != "" {
-			re := regexp.MustCompile(`[^a-z0-9-]`)
-			hostname := re.ReplaceAllString(strings.ToLower(req.Hostname), "")
-			nested(cfg, "openrig.device.hostname", hostname)
-			if !devMode {
-				exec.Command("hostnamectl", "set-hostname", hostname).Run()
-			}
-		}
-		if req.Timezone != "" {
-			nested(cfg, "openrig.device.timezone", req.Timezone)
-			if !devMode {
-				exec.Command("timedatectl", "set-timezone", req.Timezone).Run()
-			}
-		}
-		if req.Name != "" {
-			nested(cfg, "openrig.operator.name", req.Name)
-		}
-		if req.GridSquare != "" {
-			nested(cfg, "openrig.operator.grid_square", strings.ToUpper(req.GridSquare))
-		}
-		if err := writeConfig(cfg); err != nil {
-			jsonError(w, 500, "cannot write config")
-			return
-		}
-		jsonOK(w, map[string]string{"status": "ok"})
-
-	default:
-		jsonError(w, 405, "method not allowed")
-	}
-}
-
-func handleHotspot(w http.ResponseWriter, r *http.Request) {
-	cfg, err := readConfig()
-	if err != nil {
-		jsonError(w, 500, "cannot read config")
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		hs := buildHotspotConfig(cfg)
-		jsonOK(w, hs)
-
-	case http.MethodPut:
-		var req HotspotConfig
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			jsonError(w, 400, "invalid JSON")
-			return
-		}
-
-		// Validate colorcode range
-		if req.DMR.ColorCode < 1 || req.DMR.ColorCode > 15 {
-			jsonError(w, 400, "colorcode must be 1-15")
-			return
-		}
-
-		// Validate DMR network
-		if req.DMR.Network != "" && !validDMRNetworks[req.DMR.Network] {
-			jsonError(w, 400, fmt.Sprintf("invalid dmr network %q (valid: brandmeister, dmrplus, freedmr, tgif, systemx, xlx, custom)", req.DMR.Network))
-			return
-		}
-
-		nested(cfg, "openrig.hotspot.dmr.enabled", req.DMR.Enabled)
-		nested(cfg, "openrig.hotspot.dmr.dmr_id", req.DMR.DMRID)
-		nested(cfg, "openrig.hotspot.dmr.colorcode", req.DMR.ColorCode)
-		nested(cfg, "openrig.hotspot.dmr.network", req.DMR.Network)
-		nested(cfg, "openrig.hotspot.dmr.server", req.DMR.Server)
-		nested(cfg, "openrig.hotspot.dmr.password", req.DMR.Password)
-
-		// Store talkgroups as []any for JSON serialization
-		tgs := make([]any, len(req.DMR.Talkgroups))
-		for i, tg := range req.DMR.Talkgroups {
-			tgs[i] = map[string]any{"tg": tg.TG, "slot": tg.Slot, "name": tg.Name}
-		}
-		nested(cfg, "openrig.hotspot.dmr.talkgroups", tgs)
-
-		// Validate YSF network
-		if req.YSF.Network != "" && !validYSFNetworks[req.YSF.Network] {
-			jsonError(w, 400, fmt.Sprintf("invalid ysf network %q (valid: ysf, fcs, custom)", req.YSF.Network))
-			return
-		}
-
-		nested(cfg, "openrig.hotspot.ysf.enabled", req.YSF.Enabled)
-		nested(cfg, "openrig.hotspot.ysf.network", req.YSF.Network)
-		nested(cfg, "openrig.hotspot.ysf.reflector", req.YSF.Reflector)
-		nested(cfg, "openrig.hotspot.ysf.module", req.YSF.Module)
-		nested(cfg, "openrig.hotspot.ysf.suffix", req.YSF.Suffix)
-		nested(cfg, "openrig.hotspot.ysf.description", req.YSF.Description)
-
-		nested(cfg, "openrig.hotspot.cross_mode.ysf2dmr_enabled", req.CrossMode.YSF2DMREnabled)
-		nested(cfg, "openrig.hotspot.cross_mode.ysf2dmr_talkgroup", req.CrossMode.YSF2DMRTalkgroup)
-		nested(cfg, "openrig.hotspot.cross_mode.dmr2ysf_enabled", req.CrossMode.DMR2YSFEnabled)
-		nested(cfg, "openrig.hotspot.cross_mode.dmr2ysf_room", req.CrossMode.DMR2YSFRoom)
-		nested(cfg, "openrig.hotspot.rf_frequency", req.RFFrequency)
-		nested(cfg, "openrig.hotspot.tx_frequency", req.TXFrequency)
-		nested(cfg, "openrig.hotspot.modem.type", req.Modem.Type)
-		nested(cfg, "openrig.hotspot.modem.port", req.Modem.Port)
-
-		if err := writeConfig(cfg); err != nil {
-			jsonError(w, 500, "cannot write config")
-			return
-		}
-
-		// Update MMDVM.ini, DMRGateway.ini, YSFGateway.ini and restart affected services
-		go func() {
-			if !devMode {
-				exec.Command("/usr/local/lib/openrig/mmdvm-update.sh").Run()
-			}
-
-			if req.DMR.Enabled {
-				restartService("dmr")
-				restartService("dmrgateway")
-			}
-			if req.YSF.Enabled {
-				restartService("ysf")
-				restartService("ysfgateway")
-			}
-			if req.CrossMode.YSF2DMREnabled {
-				restartService("ysf2dmr")
-			}
-			if req.CrossMode.DMR2YSFEnabled {
-				restartService("dmr2ysf")
-			}
-		}()
-
-		jsonOK(w, map[string]string{"status": "ok"})
-
-	default:
-		jsonError(w, 405, "method not allowed")
-	}
-}
-
-func buildHotspotConfig(cfg map[string]any) HotspotConfig {
-	// Parse talkgroups from config
-	var tgs []Talkgroup
-	if raw, ok := nestedGet(cfg, "openrig.hotspot.dmr.talkgroups").([]any); ok {
-		for _, item := range raw {
-			if m, ok := item.(map[string]any); ok {
-				tg := Talkgroup{}
-				if v, ok := m["tg"].(float64); ok {
-					tg.TG = int(v)
-				}
-				if v, ok := m["slot"].(float64); ok {
-					tg.Slot = int(v)
-				}
-				if v, ok := m["name"].(string); ok {
-					tg.Name = v
-				}
-				tgs = append(tgs, tg)
-			}
-		}
-	}
-
-	network := getString(cfg, "openrig.hotspot.dmr.network", "brandmeister")
-	server := getString(cfg, "openrig.hotspot.dmr.server", "")
-	if server == "" {
-		server = defaultDMRServers[network]
-	}
-
-	return HotspotConfig{
-		DMR: DMRConfig{
-			Enabled:    getBool(cfg, "openrig.hotspot.dmr.enabled"),
-			DMRID:      int(getFloat(cfg, "openrig.hotspot.dmr.dmr_id")),
-			ColorCode:  int(getFloat(cfg, "openrig.hotspot.dmr.colorcode")),
-			Network:    network,
-			Server:     server,
-			Password:   getString(cfg, "openrig.hotspot.dmr.password", ""),
-			Talkgroups: tgs,
-		},
-		YSF: YSFConfig{
-			Enabled:     getBool(cfg, "openrig.hotspot.ysf.enabled"),
-			Network:     getString(cfg, "openrig.hotspot.ysf.network", "ysf"),
-			Reflector:   getString(cfg, "openrig.hotspot.ysf.reflector", "AMERICA"),
-			Module:      getString(cfg, "openrig.hotspot.ysf.module", ""),
-			Suffix:      getString(cfg, "openrig.hotspot.ysf.suffix", ""),
-			Description: getString(cfg, "openrig.hotspot.ysf.description", ""),
-		},
-		CrossMode: CrossMode{
-			YSF2DMREnabled:   getBool(cfg, "openrig.hotspot.cross_mode.ysf2dmr_enabled"),
-			YSF2DMRTalkgroup: int(getFloat(cfg, "openrig.hotspot.cross_mode.ysf2dmr_talkgroup")),
-			DMR2YSFEnabled:   getBool(cfg, "openrig.hotspot.cross_mode.dmr2ysf_enabled"),
-			DMR2YSFRoom:      getString(cfg, "openrig.hotspot.cross_mode.dmr2ysf_room", ""),
-		},
-		Modem: ModemConfig{
-			Type: getString(cfg, "openrig.hotspot.modem.type", "mmdvm_hs_hat"),
-			Port: getString(cfg, "openrig.hotspot.modem.port", "/dev/ttyAMA0"),
-		},
-		RFFrequency: getFloat(cfg, "openrig.hotspot.rf_frequency"),
-		TXFrequency: getFloat(cfg, "openrig.hotspot.tx_frequency"),
-	}
-}
-
-func handleWifi(w http.ResponseWriter, r *http.Request) {
-	cfg, err := readConfig()
-	if err != nil {
-		jsonError(w, 500, "cannot read config")
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		networks := buildWifiNetworks(cfg)
-		jsonOK(w, WifiConfig{Networks: networks})
-
-	case http.MethodPut:
-		var req WifiConfig
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			jsonError(w, 400, "invalid JSON")
-			return
-		}
-
-		// Validate passwords
-		for _, n := range req.Networks {
-			if n.Password != "" && len(n.Password) < 8 {
-				jsonError(w, 400, fmt.Sprintf("WiFi password for %q must be at least 8 characters", n.SSID))
-				return
-			}
-		}
-
-		// Store networks in config (without passwords for persistence)
-		netList := make([]any, len(req.Networks))
-		for i, n := range req.Networks {
-			netList[i] = map[string]any{
-				"ssid":     n.SSID,
-				"security": n.Security,
-				"priority": n.Priority,
-			}
-		}
-		nested(cfg, "openrig.network.wifi.networks", netList)
-		if err := writeConfig(cfg); err != nil {
-			jsonError(w, 500, "cannot write config")
-			return
-		}
-
-		// Write wpa_supplicant.conf and restart wifi
-		country := getString(cfg, "openrig.network.wifi.country", "US")
-		if err := writeWPAConf(req.Networks, country); err != nil {
-			jsonError(w, 500, "cannot write WiFi config")
-			return
-		}
-
-		go restartService("wifi")
-
-		jsonOK(w, map[string]string{"status": "ok"})
-
-	default:
-		jsonError(w, 405, "method not allowed")
-	}
-}
-
-func buildWifiNetworks(cfg map[string]any) []WifiNetwork {
-	var networks []WifiNetwork
-	raw, ok := nestedGet(cfg, "openrig.network.wifi.networks").([]any)
-	if !ok {
-		return networks
-	}
-	for _, item := range raw {
-		if m, ok := item.(map[string]any); ok {
-			n := WifiNetwork{}
-			if v, ok := m["ssid"].(string); ok {
-				n.SSID = v
-			}
-			if v, ok := m["security"].(string); ok {
-				n.Security = v
-			}
-			if v, ok := m["priority"].(float64); ok {
-				n.Priority = int(v)
-			}
-			networks = append(networks, n)
-		}
-	}
-	return networks
-}
-
-type ScannedNetwork struct {
-	SSID     string `json:"ssid"`
-	Signal   int    `json:"signal"`
-	Security string `json:"security"`
-}
-
-func handleWifiScan(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		jsonError(w, 405, "method not allowed")
-		return
-	}
-
-	out, err := exec.Command("nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list").CombinedOutput()
-	if err != nil {
-		jsonOK(w, map[string][]ScannedNetwork{"networks": {}})
-		return
-	}
-
-	// Parse colon-delimited output, dedup by SSID keeping strongest signal
-	best := make(map[string]ScannedNetwork)
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, ":", 3)
-		if len(parts) < 3 || parts[0] == "" {
-			continue
-		}
-		ssid := parts[0]
-		signal, _ := strconv.Atoi(parts[1])
-		security := parts[2]
-		if security == "" {
-			security = "Open"
-		}
-
-		if existing, ok := best[ssid]; !ok || signal > existing.Signal {
-			best[ssid] = ScannedNetwork{SSID: ssid, Signal: signal, Security: security}
-		}
-	}
-
-	networks := make([]ScannedNetwork, 0, len(best))
-	for _, n := range best {
-		networks = append(networks, n)
-	}
-	// Sort by signal strength descending (nmcli returns 0-100 percentage)
-	sort.Slice(networks, func(i, j int) bool {
-		return networks[i].Signal > networks[j].Signal
-	})
-
-	jsonOK(w, map[string][]ScannedNetwork{"networks": networks})
-}
-
-type NetworkStatus struct {
-	Mode      string `json:"mode"`
-	SSID      string `json:"ssid"`
-	IP        string `json:"ip"`
-	SignalDBM int    `json:"signal_dbm"`
-	Connected bool   `json:"connected"`
-	Interface string `json:"interface"`
-}
-
-func handleNetwork(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		jsonError(w, 405, "method not allowed")
-		return
-	}
-	jsonOK(w, getNetworkStatus())
-}
-
-func getNetworkStatus() NetworkStatus {
-	var ns NetworkStatus
-
-	// Find default route interface from /proc/net/route
-	// Format: Iface Destination Gateway Flags ... (tab-separated)
-	// Flag 0x0003 = RTF_UP | RTF_GATEWAY
 	iface := findDefaultRouteIface()
 
 	if iface == "" {
-		// No default route — check for AP mode
 		if isHostapdRunning() {
 			ns.Mode = "ap"
 			ns.Interface = "wlan0"
-			ns.IP = getIfaceIP("wlan0")
-			ns.Connected = ns.IP != ""
+			ns.Ip = getIfaceIP("wlan0")
+			ns.Connected = ns.Ip != ""
 		} else {
 			ns.Mode = "none"
 		}
@@ -835,17 +386,17 @@ func getNetworkStatus() NetworkStatus {
 	}
 
 	ns.Interface = iface
-	ns.IP = getIfaceIP(iface)
-	ns.Connected = ns.IP != ""
+	ns.Ip = getIfaceIP(iface)
+	ns.Connected = ns.Ip != ""
 
 	if strings.HasPrefix(iface, "wlan") || strings.HasPrefix(iface, "wifi") {
 		ns.Mode = "wifi"
-		ns.SSID = getWifiSSID(iface)
-		ns.SignalDBM = getWifiSignalDBM(iface)
+		ns.Ssid = getWifiSSID(iface)
+		ns.SignalDbm = int32(getWifiSignalDBM(iface))
 	} else if strings.HasPrefix(iface, "eth") {
 		ns.Mode = "ethernet"
 	} else {
-		ns.Mode = "wifi" // default for unknown wireless interfaces
+		ns.Mode = "wifi"
 	}
 
 	return ns
@@ -865,7 +416,6 @@ func findDefaultRouteIface() string {
 		if len(fields) < 4 {
 			continue
 		}
-		// Destination == 00000000 means default route
 		if fields[1] != "00000000" {
 			continue
 		}
@@ -873,7 +423,6 @@ func findDefaultRouteIface() string {
 		if err != nil {
 			continue
 		}
-		// RTF_UP (0x0001) | RTF_GATEWAY (0x0002) = 0x0003
 		if flags&0x0003 == 0x0003 {
 			return fields[0]
 		}
@@ -886,13 +435,11 @@ func getIfaceIP(iface string) string {
 	if err != nil {
 		return ""
 	}
-	// Output: "2: wlan0    inet 192.168.1.42/24 ..."
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
 		for i, f := range fields {
 			if f == "inet" && i+1 < len(fields) {
 				addr := fields[i+1]
-				// Strip CIDR prefix
 				if idx := strings.Index(addr, "/"); idx >= 0 {
 					addr = addr[:idx]
 				}
@@ -916,7 +463,6 @@ func getWifiSignalDBM(iface string) int {
 	if err != nil {
 		return 0
 	}
-	// Look for "Signal level=-65 dBm" or "Signal level:-65 dBm"
 	re := regexp.MustCompile(`Signal level[=:](-?\d+)`)
 	m := re.FindSubmatch(out)
 	if m == nil {
@@ -938,7 +484,6 @@ func isHostapdRunning() bool {
 		if !e.IsDir() {
 			continue
 		}
-		// Only check numeric (PID) directories
 		if _, err := strconv.Atoi(e.Name()); err != nil {
 			continue
 		}
@@ -946,7 +491,6 @@ func isHostapdRunning() bool {
 		if err != nil {
 			continue
 		}
-		// cmdline is null-separated; check if first arg contains "hostapd"
 		if strings.Contains(string(data), "hostapd") {
 			return true
 		}
@@ -954,165 +498,129 @@ func isHostapdRunning() bool {
 	return false
 }
 
-func handleClients(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		jsonError(w, 405, "method not allowed")
-		return
-	}
+// ── Config builders (JSON config → proto messages) ───────────────────────
 
-	// In a real deployment, this would query MMDVM or YSF gateway logs.
-	// For now, return an empty list. The structure is ready for integration.
-	clients := []Client{}
-	jsonOK(w, map[string]any{"clients": clients})
-}
-
-func handleServiceRestart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonError(w, 405, "method not allowed")
-		return
-	}
-
-	// Extract service name from path: /api/services/{name}/restart
-	path := strings.TrimPrefix(r.URL.Path, "/api/services/")
-	name := strings.TrimSuffix(path, "/restart")
-
-	if _, ok := validServices[name]; !ok {
-		jsonError(w, 400, fmt.Sprintf("unknown service: %s (valid: dmr, ysf, ysf2dmr, dmr2ysf, wifi, mmdvmhost, rigctld, dmrgateway, ysfgateway)", name))
-		return
-	}
-
-	if err := restartService(name); err != nil {
-		jsonError(w, 500, fmt.Sprintf("restart failed: %v", err))
-		return
-	}
-
-	jsonOK(w, map[string]string{"status": "ok", "service": name})
-}
-
-func handleReboot(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonError(w, 405, "method not allowed")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	w.Write([]byte(`{"ok":true}`))
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-	if !devMode {
-		go func() {
-			time.Sleep(500 * time.Millisecond)
-			exec.Command("systemctl", "reboot").Run()
-		}()
-	} else {
-		log.Println("[dev] reboot skipped")
+func buildDeviceStatus(cfg map[string]any, m systemMetrics) *openrigv1.DeviceStatus {
+	return &openrigv1.DeviceStatus{
+		Provisioned: getBool(cfg, "openrig.device.provisioned"),
+		DeviceType:  getString(cfg, "openrig.device.type", "unconfigured"),
+		Callsign:    getString(cfg, "openrig.operator.callsign", ""),
+		Version:     getString(cfg, "openrig.version", "0.1.0"),
+		Hostname:    getString(cfg, "openrig.device.hostname", "openrig-config"),
+		Uptime:      int32(m.Uptime),
+		CpuPercent:  m.CPUPercent,
+		MemTotalMb:  int32(m.MemTotalMB),
+		MemUsedMb:   int32(m.MemUsedMB),
+		DiskTotalGb: m.DiskTotalGB,
+		DiskUsedGb:  m.DiskUsedGB,
 	}
 }
 
-func handleShutdown(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonError(w, 405, "method not allowed")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	w.Write([]byte(`{"ok":true}`))
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-	if !devMode {
-		go func() {
-			time.Sleep(500 * time.Millisecond)
-			exec.Command("systemctl", "poweroff").Run()
-		}()
-	} else {
-		log.Println("[dev] poweroff skipped")
+func buildDeviceConfig(cfg map[string]any) *openrigv1.DeviceConfig {
+	return &openrigv1.DeviceConfig{
+		Callsign:   getString(cfg, "openrig.operator.callsign", ""),
+		Hostname:   getString(cfg, "openrig.device.hostname", ""),
+		Timezone:   getString(cfg, "openrig.device.timezone", "UTC"),
+		Name:       getString(cfg, "openrig.operator.name", ""),
+		GridSquare: getString(cfg, "openrig.operator.grid_square", ""),
 	}
 }
 
-func handleRig(w http.ResponseWriter, r *http.Request) {
-	cfg, err := readConfig()
-	if err != nil {
-		jsonError(w, 500, "cannot read config")
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		rigs := buildRigList(cfg)
-		jsonOK(w, RigListResponse{Rigs: rigs})
-
-	case http.MethodPut:
-		var req RigListResponse
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			jsonError(w, 400, "invalid JSON")
-			return
-		}
-
-		// Validate each rig
-		for i, rig := range req.Rigs {
-			if rig.HamlibModelID < 1 {
-				jsonError(w, 400, fmt.Sprintf("rig[%d]: hamlib_model_id must be a positive integer", i))
-				return
-			}
-			if !validBaudRates[rig.Baud] {
-				jsonError(w, 400, fmt.Sprintf("rig[%d]: baud must be one of 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200", i))
-				return
-			}
-			if !validParities[rig.Parity] {
-				jsonError(w, 400, fmt.Sprintf("rig[%d]: parity must be none, even, or odd", i))
-				return
-			}
-			if !validHandshakes[rig.Handshake] {
-				jsonError(w, 400, fmt.Sprintf("rig[%d]: handshake must be none, hardware, or software", i))
-				return
+func buildHotspotConfig(cfg map[string]any) *openrigv1.HotspotConfig {
+	var tgs []*openrigv1.Talkgroup
+	if raw, ok := nestedGet(cfg, "openrig.hotspot.dmr.talkgroups").([]any); ok {
+		for _, item := range raw {
+			if m, ok := item.(map[string]any); ok {
+				tg := &openrigv1.Talkgroup{}
+				if v, ok := m["tg"].(float64); ok {
+					tg.Tg = int32(v)
+				}
+				if v, ok := m["slot"].(float64); ok {
+					tg.Slot = int32(v)
+				}
+				if v, ok := m["name"].(string); ok {
+					tg.Name = v
+				}
+				tgs = append(tgs, tg)
 			}
 		}
+	}
 
-		// Convert to []any for JSON storage
-		rigList := make([]any, len(req.Rigs))
-		for i, rig := range req.Rigs {
-			rigList[i] = map[string]any{
-				"id":              fmt.Sprintf("rig%d", i+1),
-				"enabled":         rig.Enabled,
-				"hamlib_model_id": rig.HamlibModelID,
-				"port":            rig.Port,
-				"baud":            rig.Baud,
-				"data_bits":       rig.DataBits,
-				"stop_bits":       rig.StopBits,
-				"parity":          rig.Parity,
-				"handshake":       rig.Handshake,
-			}
-		}
-		nested(cfg, "openrig.radio.rigs", rigList)
+	network := getString(cfg, "openrig.hotspot.dmr.network", "brandmeister")
+	server := getString(cfg, "openrig.hotspot.dmr.server", "")
+	if server == "" {
+		server = defaultDMRServers[network]
+	}
 
-		if err := writeConfig(cfg); err != nil {
-			jsonError(w, 500, "cannot write config")
-			return
-		}
-
-		go restartService("rigctld")
-
-		jsonOK(w, map[string]string{"status": "ok"})
-
-	default:
-		jsonError(w, 405, "method not allowed")
+	return &openrigv1.HotspotConfig{
+		Dmr: &openrigv1.DMRConfig{
+			Enabled:    getBool(cfg, "openrig.hotspot.dmr.enabled"),
+			DmrId:      int32(getFloat(cfg, "openrig.hotspot.dmr.dmr_id")),
+			Colorcode:  int32(getFloat(cfg, "openrig.hotspot.dmr.colorcode")),
+			Network:    network,
+			Server:     server,
+			Password:   getString(cfg, "openrig.hotspot.dmr.password", ""),
+			Talkgroups: tgs,
+		},
+		Ysf: &openrigv1.YSFConfig{
+			Enabled:     getBool(cfg, "openrig.hotspot.ysf.enabled"),
+			Network:     getString(cfg, "openrig.hotspot.ysf.network", "ysf"),
+			Reflector:   getString(cfg, "openrig.hotspot.ysf.reflector", "AMERICA"),
+			Module:      getString(cfg, "openrig.hotspot.ysf.module", ""),
+			Suffix:      getString(cfg, "openrig.hotspot.ysf.suffix", ""),
+			Description: getString(cfg, "openrig.hotspot.ysf.description", ""),
+		},
+		CrossMode: &openrigv1.CrossModeConfig{
+			Ysf2DmrEnabled:   getBool(cfg, "openrig.hotspot.cross_mode.ysf2dmr_enabled"),
+			Ysf2DmrTalkgroup: int32(getFloat(cfg, "openrig.hotspot.cross_mode.ysf2dmr_talkgroup")),
+			Dmr2YsfEnabled:   getBool(cfg, "openrig.hotspot.cross_mode.dmr2ysf_enabled"),
+			Dmr2YsfRoom:      getString(cfg, "openrig.hotspot.cross_mode.dmr2ysf_room", ""),
+		},
+		Modem: &openrigv1.ModemConfig{
+			Type: getString(cfg, "openrig.hotspot.modem.type", "mmdvm_hs_hat"),
+			Port: getString(cfg, "openrig.hotspot.modem.port", "/dev/ttyAMA0"),
+		},
+		RfFrequency: getFloat(cfg, "openrig.hotspot.rf_frequency"),
+		TxFrequency: getFloat(cfg, "openrig.hotspot.tx_frequency"),
 	}
 }
 
-func buildRigList(cfg map[string]any) []RigConfig {
-	var rigs []RigConfig
+func buildWifiConfig(cfg map[string]any) *openrigv1.WifiConfig {
+	var networks []*openrigv1.WifiNetwork
+	raw, ok := nestedGet(cfg, "openrig.network.wifi.networks").([]any)
+	if !ok {
+		return &openrigv1.WifiConfig{Networks: networks}
+	}
+	for _, item := range raw {
+		if m, ok := item.(map[string]any); ok {
+			n := &openrigv1.WifiNetwork{}
+			if v, ok := m["ssid"].(string); ok {
+				n.Ssid = v
+			}
+			if v, ok := m["security"].(string); ok {
+				n.Security = v
+			}
+			if v, ok := m["priority"].(float64); ok {
+				n.Priority = int32(v)
+			}
+			networks = append(networks, n)
+		}
+	}
+	return &openrigv1.WifiConfig{Networks: networks}
+}
+
+func buildRigList(cfg map[string]any) *openrigv1.RigList {
+	var rigs []*openrigv1.RigConfig
 	raw, ok := nestedGet(cfg, "openrig.radio.rigs").([]any)
 	if !ok {
-		return rigs
+		return &openrigv1.RigList{Rigs: rigs}
 	}
 	for _, item := range raw {
 		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		rig := RigConfig{
+		rig := &openrigv1.RigConfig{
 			Port:      "/dev/ttyUSB0",
 			Baud:      9600,
 			DataBits:  8,
@@ -1124,19 +632,19 @@ func buildRigList(cfg map[string]any) []RigConfig {
 			rig.Enabled = v
 		}
 		if v, ok := m["hamlib_model_id"].(float64); ok {
-			rig.HamlibModelID = int(v)
+			rig.HamlibModelId = int32(v)
 		}
 		if v, ok := m["port"].(string); ok && v != "" {
 			rig.Port = v
 		}
 		if v, ok := m["baud"].(float64); ok && v > 0 {
-			rig.Baud = int(v)
+			rig.Baud = int32(v)
 		}
 		if v, ok := m["data_bits"].(float64); ok && v > 0 {
-			rig.DataBits = int(v)
+			rig.DataBits = int32(v)
 		}
 		if v, ok := m["stop_bits"].(float64); ok && v > 0 {
-			rig.StopBits = int(v)
+			rig.StopBits = int32(v)
 		}
 		if v, ok := m["parity"].(string); ok && v != "" {
 			rig.Parity = v
@@ -1146,89 +654,10 @@ func buildRigList(cfg map[string]any) []RigConfig {
 		}
 		rigs = append(rigs, rig)
 	}
-	return rigs
+	return &openrigv1.RigList{Rigs: rigs}
 }
 
-// ── DMR ID endpoint ──────────────────────────────────────────────────────
-
-func handleDmrId(w http.ResponseWriter, r *http.Request) {
-	cfg, err := readConfig()
-	if err != nil {
-		jsonError(w, 500, "cannot read config")
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		dmrID := getFloat(cfg, "openrig.operator.dmr_id")
-		jsonOK(w, map[string]int{"dmr_id": int(dmrID)})
-
-	case http.MethodPut:
-		var req struct {
-			DMRID int `json:"dmr_id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			jsonError(w, 400, "invalid JSON")
-			return
-		}
-
-		if req.DMRID < 1000000 || req.DMRID > 9999999 {
-			jsonError(w, 400, "dmr_id must be a 7-digit number (1000000-9999999)")
-			return
-		}
-
-		nested(cfg, "openrig.operator.dmr_id", req.DMRID)
-
-		if err := writeConfig(cfg); err != nil {
-			jsonError(w, 500, "cannot write config")
-			return
-		}
-
-		// Update gateway configs with new DMR ID
-		if !devMode {
-			go exec.Command("/usr/local/lib/openrig/mmdvm-update.sh").Run()
-		}
-
-		jsonOK(w, map[string]string{"status": "ok"})
-
-	default:
-		jsonError(w, 405, "method not allowed")
-	}
-}
-
-
-// ── Last-heard endpoint ──────────────────────────────────────────────────
-
-type LastHeardEntry struct {
-	Callsign  string `json:"callsign"`
-	Mode      string `json:"mode"`      // "DMR" or "YSF"
-	Info      string `json:"info"`      // TG number for DMR, room name for YSF
-	Duration  string `json:"duration"`  // e.g. "12s"
-	Timestamp string `json:"timestamp"` // RFC3339
-}
-
-func handleLastHeard(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		jsonError(w, 405, "method not allowed")
-		return
-	}
-
-	if devMode {
-		now := time.Now()
-		entries := []LastHeardEntry{
-			{Callsign: "W1ABC", Mode: "DMR", Info: "3100", Duration: "13s", Timestamp: now.Add(-2 * time.Minute).Format(time.RFC3339)},
-			{Callsign: "K5XYZ", Mode: "YSF", Info: "AMERICA", Duration: "8s", Timestamp: now.Add(-5 * time.Minute).Format(time.RFC3339)},
-			{Callsign: "N3DEF", Mode: "DMR", Info: "91", Duration: "22s", Timestamp: now.Add(-11 * time.Minute).Format(time.RFC3339)},
-			{Callsign: "VE3RST", Mode: "DMR", Info: "302", Duration: "5s", Timestamp: now.Add(-18 * time.Minute).Format(time.RFC3339)},
-			{Callsign: "JA1QRS", Mode: "YSF", Info: "FCS001-A", Duration: "15s", Timestamp: now.Add(-30 * time.Minute).Format(time.RFC3339)},
-		}
-		jsonOK(w, map[string]any{"entries": entries})
-		return
-	}
-
-	entries := parseMMDVMLastHeard()
-	jsonOK(w, map[string]any{"entries": entries})
-}
+// ── Last-heard parser ────────────────────────────────────────────────────
 
 var (
 	reMMDVMEnd = regexp.MustCompile(
@@ -1236,29 +665,27 @@ var (
 			`(DMR|YSF).*end of.*transmission from ([A-Z0-9/]+) to (?:TG )?(\S+).*?(\d+(?:\.\d+)?) seconds`)
 )
 
-func parseMMDVMLastHeard() []LastHeardEntry {
-	// Find the most recent MMDVM log file
+func parseMMDVMLastHeard() []*openrigv1.LastHeardEntry {
 	matches, err := filepath.Glob("/var/log/mmdvmhost/MMDVM-*.log")
 	if err != nil || len(matches) == 0 {
-		return []LastHeardEntry{}
+		return nil
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(matches)))
 	logFile := matches[0]
 
 	data, err := os.ReadFile(logFile)
 	if err != nil {
-		return []LastHeardEntry{}
+		return nil
 	}
 
 	lines := strings.Split(string(data), "\n")
-	// Take last 500 lines
 	start := len(lines) - 500
 	if start < 0 {
 		start = 0
 	}
 	lines = lines[start:]
 
-	var entries []LastHeardEntry
+	var entries []*openrigv1.LastHeardEntry
 	for i := len(lines) - 1; i >= 0 && len(entries) < 10; i-- {
 		m := reMMDVMEnd.FindStringSubmatch(lines[i])
 		if m == nil {
@@ -1269,7 +696,7 @@ func parseMMDVMLastHeard() []LastHeardEntry {
 			continue
 		}
 		secs, _ := strconv.ParseFloat(m[5], 64)
-		entries = append(entries, LastHeardEntry{
+		entries = append(entries, &openrigv1.LastHeardEntry{
 			Callsign:  m[3],
 			Mode:      m[2],
 			Info:      m[4],
@@ -1280,7 +707,18 @@ func parseMMDVMLastHeard() []LastHeardEntry {
 	return entries
 }
 
-// ── DMR server list ──────────────────────────────────────────────────────
+func devModeLastHeard() []*openrigv1.LastHeardEntry {
+	now := time.Now()
+	return []*openrigv1.LastHeardEntry{
+		{Callsign: "W1ABC", Mode: "DMR", Info: "3100", Duration: "13s", Timestamp: now.Add(-2 * time.Minute).Format(time.RFC3339)},
+		{Callsign: "K5XYZ", Mode: "YSF", Info: "AMERICA", Duration: "8s", Timestamp: now.Add(-5 * time.Minute).Format(time.RFC3339)},
+		{Callsign: "N3DEF", Mode: "DMR", Info: "91", Duration: "22s", Timestamp: now.Add(-11 * time.Minute).Format(time.RFC3339)},
+		{Callsign: "VE3RST", Mode: "DMR", Info: "302", Duration: "5s", Timestamp: now.Add(-18 * time.Minute).Format(time.RFC3339)},
+		{Callsign: "JA1QRS", Mode: "YSF", Info: "FCS001-A", Duration: "15s", Timestamp: now.Add(-30 * time.Minute).Format(time.RFC3339)},
+	}
+}
+
+// ── DMR server list helpers ──────────────────────────────────────────────
 
 var hardcodedServers = map[string][]string{
 	"ysf": {
@@ -1318,7 +756,7 @@ var hardcodedServers = map[string][]string{
 		"uk.freedmr.net",
 		"aus.freedmr.net",
 	},
-	"tgif": {"tgif.network"},
+	"tgif":    {"tgif.network"},
 	"systemx": {"xlx307.opendigital.radio"},
 }
 
@@ -1345,8 +783,6 @@ func setCachedServers(network string, servers []string) {
 	srvCacheExp[network] = time.Now().Add(time.Hour)
 }
 
-// fetchHostsFile fetches a semicolon-delimited hosts file (YSFHosts.txt / FCSHosts.txt)
-// and returns the first field of each non-comment line — the reflector/room name.
 func fetchHostsFile(url string, fallback []string) []string {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
@@ -1410,27 +846,17 @@ func fetchBrandmeisterServers() []string {
 	return servers
 }
 
-func handleHotspotServers(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		jsonError(w, 405, "method not allowed")
-		return
-	}
-	network := r.URL.Query().Get("network")
-
-	// Cache hit — return immediately.
+func getServersForNetwork(network string) []string {
 	if servers, ok := getCachedServers(network); ok {
-		jsonOK(w, map[string][]string{"servers": servers})
-		return
+		return servers
 	}
 
-	// Return the hardcoded list right away so the UI isn't blocked,
-	// then fetch the live list in the background to warm the cache.
 	immediate := hardcodedServers[network]
 	if immediate == nil {
 		immediate = []string{}
 	}
-	jsonOK(w, map[string][]string{"servers": immediate})
 
+	// Background fetch to warm cache
 	go func() {
 		var live []string
 		switch network {
@@ -1445,6 +871,489 @@ func handleHotspotServers(w http.ResponseWriter, r *http.Request) {
 		}
 		setCachedServers(network, live)
 	}()
+
+	return immediate
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ConnectRPC service implementations
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── DeviceService ────────────────────────────────────────────────────────
+
+type deviceServer struct {
+	openrigv1connect.UnimplementedDeviceServiceHandler
+}
+
+func (s *deviceServer) GetStatus(_ context.Context, _ *connect.Request[openrigv1.Empty]) (*connect.Response[openrigv1.DeviceStatus], error) {
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+	m := getSystemMetrics()
+	return connect.NewResponse(buildDeviceStatus(cfg, m)), nil
+}
+
+func (s *deviceServer) StreamStatus(ctx context.Context, _ *connect.Request[openrigv1.Empty], stream *connect.ServerStream[openrigv1.DeviceStatus]) error {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	// Send one immediately
+	cfg, err := readConfig()
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+	m := getSystemMetrics()
+	if err := stream.Send(buildDeviceStatus(cfg, m)); err != nil {
+		return err
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			cfg, err := readConfig()
+			if err != nil {
+				continue
+			}
+			m := getSystemMetrics()
+			if err := stream.Send(buildDeviceStatus(cfg, m)); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (s *deviceServer) GetConfig(_ context.Context, _ *connect.Request[openrigv1.Empty]) (*connect.Response[openrigv1.DeviceConfig], error) {
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+	return connect.NewResponse(buildDeviceConfig(cfg)), nil
+}
+
+func (s *deviceServer) UpdateConfig(_ context.Context, req *connect.Request[openrigv1.UpdateConfigRequest]) (*connect.Response[openrigv1.DeviceConfig], error) {
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+
+	c := req.Msg.Config
+	if c == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("config is required"))
+	}
+
+	if c.Callsign != "" {
+		nested(cfg, "openrig.operator.callsign", strings.ToUpper(c.Callsign))
+	}
+	if c.Hostname != "" {
+		re := regexp.MustCompile(`[^a-z0-9-]`)
+		hostname := re.ReplaceAllString(strings.ToLower(c.Hostname), "")
+		nested(cfg, "openrig.device.hostname", hostname)
+		if !devMode {
+			exec.Command("hostnamectl", "set-hostname", hostname).Run()
+		}
+	}
+	if c.Timezone != "" {
+		nested(cfg, "openrig.device.timezone", c.Timezone)
+		if !devMode {
+			exec.Command("timedatectl", "set-timezone", c.Timezone).Run()
+		}
+	}
+	if c.Name != "" {
+		nested(cfg, "openrig.operator.name", c.Name)
+	}
+	if c.GridSquare != "" {
+		nested(cfg, "openrig.operator.grid_square", strings.ToUpper(c.GridSquare))
+	}
+
+	if err := writeConfig(cfg); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write config"))
+	}
+
+	return connect.NewResponse(buildDeviceConfig(cfg)), nil
+}
+
+func (s *deviceServer) RestartService(_ context.Context, req *connect.Request[openrigv1.RestartServiceRequest]) (*connect.Response[openrigv1.RestartServiceResponse], error) {
+	name := req.Msg.Service
+	if _, ok := validServices[name]; !ok {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unknown service: %s (valid: dmr, ysf, ysf2dmr, dmr2ysf, wifi, mmdvmhost, rigctld, dmrgateway, ysfgateway)", name))
+	}
+	if err := doRestartService(name); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("restart failed: %v", err))
+	}
+	return connect.NewResponse(&openrigv1.RestartServiceResponse{}), nil
+}
+
+func (s *deviceServer) Reboot(_ context.Context, _ *connect.Request[openrigv1.RebootRequest]) (*connect.Response[openrigv1.RebootResponse], error) {
+	if !devMode {
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			exec.Command("systemctl", "reboot").Run()
+		}()
+	} else {
+		log.Println("[dev] reboot skipped")
+	}
+	return connect.NewResponse(&openrigv1.RebootResponse{}), nil
+}
+
+func (s *deviceServer) Shutdown(_ context.Context, _ *connect.Request[openrigv1.ShutdownRequest]) (*connect.Response[openrigv1.ShutdownResponse], error) {
+	if !devMode {
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			exec.Command("systemctl", "poweroff").Run()
+		}()
+	} else {
+		log.Println("[dev] poweroff skipped")
+	}
+	return connect.NewResponse(&openrigv1.ShutdownResponse{}), nil
+}
+
+// ── HotspotService ───────────────────────────────────────────────────────
+
+type hotspotServer struct {
+	openrigv1connect.UnimplementedHotspotServiceHandler
+}
+
+func (s *hotspotServer) GetHotspot(_ context.Context, _ *connect.Request[openrigv1.Empty]) (*connect.Response[openrigv1.HotspotConfig], error) {
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+	return connect.NewResponse(buildHotspotConfig(cfg)), nil
+}
+
+func (s *hotspotServer) UpdateHotspot(_ context.Context, req *connect.Request[openrigv1.UpdateHotspotRequest]) (*connect.Response[openrigv1.HotspotConfig], error) {
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+
+	hc := req.Msg.Config
+	if hc == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("config is required"))
+	}
+
+	// Validate
+	if hc.Dmr != nil {
+		if hc.Dmr.Colorcode < 1 || hc.Dmr.Colorcode > 15 {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("colorcode must be 1-15"))
+		}
+		if hc.Dmr.Network != "" && !validDMRNetworks[hc.Dmr.Network] {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid dmr network %q (valid: brandmeister, dmrplus, freedmr, tgif, systemx, xlx, custom)", hc.Dmr.Network))
+		}
+
+		nested(cfg, "openrig.hotspot.dmr.enabled", hc.Dmr.Enabled)
+		nested(cfg, "openrig.hotspot.dmr.dmr_id", int(hc.Dmr.DmrId))
+		nested(cfg, "openrig.hotspot.dmr.colorcode", int(hc.Dmr.Colorcode))
+		nested(cfg, "openrig.hotspot.dmr.network", hc.Dmr.Network)
+		nested(cfg, "openrig.hotspot.dmr.server", hc.Dmr.Server)
+		nested(cfg, "openrig.hotspot.dmr.password", hc.Dmr.Password)
+
+		tgs := make([]any, len(hc.Dmr.Talkgroups))
+		for i, tg := range hc.Dmr.Talkgroups {
+			tgs[i] = map[string]any{"tg": int(tg.Tg), "slot": int(tg.Slot), "name": tg.Name}
+		}
+		nested(cfg, "openrig.hotspot.dmr.talkgroups", tgs)
+	}
+
+	if hc.Ysf != nil {
+		if hc.Ysf.Network != "" && !validYSFNetworks[hc.Ysf.Network] {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid ysf network %q (valid: ysf, fcs, custom)", hc.Ysf.Network))
+		}
+
+		nested(cfg, "openrig.hotspot.ysf.enabled", hc.Ysf.Enabled)
+		nested(cfg, "openrig.hotspot.ysf.network", hc.Ysf.Network)
+		nested(cfg, "openrig.hotspot.ysf.reflector", hc.Ysf.Reflector)
+		nested(cfg, "openrig.hotspot.ysf.module", hc.Ysf.Module)
+		nested(cfg, "openrig.hotspot.ysf.suffix", hc.Ysf.Suffix)
+		nested(cfg, "openrig.hotspot.ysf.description", hc.Ysf.Description)
+	}
+
+	if hc.CrossMode != nil {
+		nested(cfg, "openrig.hotspot.cross_mode.ysf2dmr_enabled", hc.CrossMode.Ysf2DmrEnabled)
+		nested(cfg, "openrig.hotspot.cross_mode.ysf2dmr_talkgroup", int(hc.CrossMode.Ysf2DmrTalkgroup))
+		nested(cfg, "openrig.hotspot.cross_mode.dmr2ysf_enabled", hc.CrossMode.Dmr2YsfEnabled)
+		nested(cfg, "openrig.hotspot.cross_mode.dmr2ysf_room", hc.CrossMode.Dmr2YsfRoom)
+	}
+
+	nested(cfg, "openrig.hotspot.rf_frequency", hc.RfFrequency)
+	nested(cfg, "openrig.hotspot.tx_frequency", hc.TxFrequency)
+
+	if hc.Modem != nil {
+		nested(cfg, "openrig.hotspot.modem.type", hc.Modem.Type)
+		nested(cfg, "openrig.hotspot.modem.port", hc.Modem.Port)
+	}
+
+	if err := writeConfig(cfg); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write config"))
+	}
+
+	// Update MMDVM configs and restart affected services
+	go func() {
+		if !devMode {
+			exec.Command("/usr/local/lib/openrig/mmdvm-update.sh").Run()
+		}
+		if hc.Dmr != nil && hc.Dmr.Enabled {
+			doRestartService("dmr")
+			doRestartService("dmrgateway")
+		}
+		if hc.Ysf != nil && hc.Ysf.Enabled {
+			doRestartService("ysf")
+			doRestartService("ysfgateway")
+		}
+		if hc.CrossMode != nil {
+			if hc.CrossMode.Ysf2DmrEnabled {
+				doRestartService("ysf2dmr")
+			}
+			if hc.CrossMode.Dmr2YsfEnabled {
+				doRestartService("dmr2ysf")
+			}
+		}
+	}()
+
+	return connect.NewResponse(buildHotspotConfig(cfg)), nil
+}
+
+func (s *hotspotServer) UpdateDmrId(_ context.Context, req *connect.Request[openrigv1.UpdateDmrIdRequest]) (*connect.Response[openrigv1.UpdateDmrIdResponse], error) {
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+
+	dmrID := int(req.Msg.DmrId)
+	if dmrID < 1000000 || dmrID > 9999999 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("dmr_id must be a 7-digit number (1000000-9999999)"))
+	}
+
+	nested(cfg, "openrig.operator.dmr_id", dmrID)
+	if err := writeConfig(cfg); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write config"))
+	}
+
+	if !devMode {
+		go exec.Command("/usr/local/lib/openrig/mmdvm-update.sh").Run()
+	}
+
+	return connect.NewResponse(&openrigv1.UpdateDmrIdResponse{}), nil
+}
+
+func (s *hotspotServer) GetServers(_ context.Context, req *connect.Request[openrigv1.GetServersRequest]) (*connect.Response[openrigv1.GetServersResponse], error) {
+	servers := getServersForNetwork(req.Msg.Network)
+	return connect.NewResponse(&openrigv1.GetServersResponse{Servers: servers}), nil
+}
+
+func (s *hotspotServer) StreamLastHeard(ctx context.Context, _ *connect.Request[openrigv1.Empty], stream *connect.ServerStream[openrigv1.LastHeardEntry]) error {
+	if devMode {
+		entries := devModeLastHeard()
+		for _, e := range entries {
+			if err := stream.Send(e); err != nil {
+				return err
+			}
+		}
+		// Block until client disconnects
+		<-ctx.Done()
+		return nil
+	}
+
+	// Track already-sent entries by timestamp to avoid duplicates
+	sent := make(map[string]bool)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	// Send initial batch
+	entries := parseMMDVMLastHeard()
+	for _, e := range entries {
+		sent[e.Timestamp+e.Callsign] = true
+		if err := stream.Send(e); err != nil {
+			return err
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			entries := parseMMDVMLastHeard()
+			for _, e := range entries {
+				key := e.Timestamp + e.Callsign
+				if sent[key] {
+					continue
+				}
+				sent[key] = true
+				if err := stream.Send(e); err != nil {
+					return err
+				}
+			}
+		}
+	}
+}
+
+// ── WifiService ──────────────────────────────────────────────────────────
+
+type wifiServer struct {
+	openrigv1connect.UnimplementedWifiServiceHandler
+}
+
+func (s *wifiServer) GetWifi(_ context.Context, _ *connect.Request[openrigv1.Empty]) (*connect.Response[openrigv1.WifiConfig], error) {
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+	return connect.NewResponse(buildWifiConfig(cfg)), nil
+}
+
+func (s *wifiServer) UpdateWifi(_ context.Context, req *connect.Request[openrigv1.UpdateWifiRequest]) (*connect.Response[openrigv1.WifiConfig], error) {
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+
+	wc := req.Msg.Config
+	if wc == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("config is required"))
+	}
+
+	for _, n := range wc.Networks {
+		if n.Password != "" && len(n.Password) < 8 {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("WiFi password for %q must be at least 8 characters", n.Ssid))
+		}
+	}
+
+	// Store networks in config (without passwords)
+	netList := make([]any, len(wc.Networks))
+	for i, n := range wc.Networks {
+		netList[i] = map[string]any{
+			"ssid":     n.Ssid,
+			"security": n.Security,
+			"priority": int(n.Priority),
+		}
+	}
+	nested(cfg, "openrig.network.wifi.networks", netList)
+	if err := writeConfig(cfg); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write config"))
+	}
+
+	country := getString(cfg, "openrig.network.wifi.country", "US")
+	if err := writeWPAConf(wc.Networks, country); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write WiFi config"))
+	}
+
+	go doRestartService("wifi")
+
+	return connect.NewResponse(buildWifiConfig(cfg)), nil
+}
+
+func (s *wifiServer) ScanWifi(_ context.Context, _ *connect.Request[openrigv1.Empty]) (*connect.Response[openrigv1.ScanWifiResponse], error) {
+	out, err := exec.Command("nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list").CombinedOutput()
+	if err != nil {
+		return connect.NewResponse(&openrigv1.ScanWifiResponse{}), nil
+	}
+
+	type scanResult struct {
+		ssid     string
+		signal   int
+		security string
+	}
+	best := make(map[string]scanResult)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) < 3 || parts[0] == "" {
+			continue
+		}
+		ssid := parts[0]
+		signal, _ := strconv.Atoi(parts[1])
+		security := parts[2]
+		if security == "" {
+			security = "Open"
+		}
+		if existing, ok := best[ssid]; !ok || signal > existing.signal {
+			best[ssid] = scanResult{ssid: ssid, signal: signal, security: security}
+		}
+	}
+
+	var networks []*openrigv1.ScannedNetwork
+	for _, n := range best {
+		networks = append(networks, &openrigv1.ScannedNetwork{
+			Ssid:      n.ssid,
+			SignalDbm: int32(n.signal),
+			Security:  n.security,
+		})
+	}
+	sort.Slice(networks, func(i, j int) bool {
+		return networks[i].SignalDbm > networks[j].SignalDbm
+	})
+
+	return connect.NewResponse(&openrigv1.ScanWifiResponse{Networks: networks}), nil
+}
+
+func (s *wifiServer) GetNetwork(_ context.Context, _ *connect.Request[openrigv1.Empty]) (*connect.Response[openrigv1.NetworkStatus], error) {
+	return connect.NewResponse(getNetworkStatus()), nil
+}
+
+// ── RigService ───────────────────────────────────────────────────────────
+
+type rigServer struct {
+	openrigv1connect.UnimplementedRigServiceHandler
+}
+
+func (s *rigServer) GetRigs(_ context.Context, _ *connect.Request[openrigv1.Empty]) (*connect.Response[openrigv1.RigList], error) {
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+	return connect.NewResponse(buildRigList(cfg)), nil
+}
+
+func (s *rigServer) UpdateRigs(_ context.Context, req *connect.Request[openrigv1.UpdateRigsRequest]) (*connect.Response[openrigv1.RigList], error) {
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config"))
+	}
+
+	for i, rig := range req.Msg.Rigs {
+		if rig.HamlibModelId < 1 {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("rig[%d]: hamlib_model_id must be a positive integer", i))
+		}
+		if !validBaudRates[int(rig.Baud)] {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("rig[%d]: baud must be one of 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200", i))
+		}
+		if !validParities[rig.Parity] {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("rig[%d]: parity must be none, even, or odd", i))
+		}
+		if !validHandshakes[rig.Handshake] {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("rig[%d]: handshake must be none, hardware, or software", i))
+		}
+	}
+
+	rigList := make([]any, len(req.Msg.Rigs))
+	for i, rig := range req.Msg.Rigs {
+		rigList[i] = map[string]any{
+			"id":              fmt.Sprintf("rig%d", i+1),
+			"enabled":         rig.Enabled,
+			"hamlib_model_id": int(rig.HamlibModelId),
+			"port":            rig.Port,
+			"baud":            int(rig.Baud),
+			"data_bits":       int(rig.DataBits),
+			"stop_bits":       int(rig.StopBits),
+			"parity":          rig.Parity,
+			"handshake":       rig.Handshake,
+		}
+	}
+	nested(cfg, "openrig.radio.rigs", rigList)
+
+	if err := writeConfig(cfg); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write config"))
+	}
+
+	go doRestartService("rigctld")
+
+	return connect.NewResponse(buildRigList(cfg)), nil
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
@@ -1456,7 +1365,6 @@ func main() {
 	if devMode {
 		configPath = "./openrig.json"
 		wpaConfPath = "./wpa_supplicant-dev.conf"
-		// Seed a local config if none exists
 		if _, err := os.Stat(configPath); os.IsNotExist(err) {
 			seed := []byte(`{"openrig":{"device":{"provisioned":true,"type":"hotspot","hostname":"dev-hotspot","timezone":"UTC"},"operator":{"callsign":"N0CALL","name":"Dev User","grid_square":"FN31","country":"US"},"management":{"api_enabled":true,"mdns_enabled":true},"hotspot":{"dmr":{"enabled":true,"dmr_id":1234567,"colorcode":1,"network":"brandmeister","server":"us-west.brandmeister.network","password":"","talkgroups":[{"tg":91,"slot":1,"name":"Worldwide"},{"tg":3100,"slot":2,"name":"USA"}]},"ysf":{"enabled":false,"network":"ysf","reflector":"AMERICA","module":"","suffix":"-OR","description":"Dev hotspot"},"cross_mode":{"ysf2dmr_enabled":false,"ysf2dmr_talkgroup":91,"dmr2ysf_enabled":false,"dmr2ysf_room":""},"rf_frequency":438.8},"network":{"wifi":{"country":"US","networks":[{"ssid":"HomeNetwork","security":"auto","priority":10}]}}}}`)
 			if err := os.WriteFile(configPath, seed, 0644); err != nil {
@@ -1469,32 +1377,21 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// REST API only — web UI is served by openrig-webprovision on port 80
-	mux.HandleFunc("/api/status", handleStatus)
-	mux.HandleFunc("/api/config", handleConfig)
-	mux.HandleFunc("/api/hotspot", handleHotspot)
-	mux.HandleFunc("/api/wifi", handleWifi)
-	mux.HandleFunc("/api/wifi/scan", handleWifiScan)
-	mux.HandleFunc("/api/network", handleNetwork)
-	mux.HandleFunc("/api/rig", handleRig)
-	mux.HandleFunc("/api/dmrid", handleDmrId)
-	mux.HandleFunc("/api/clients", handleClients)
-	mux.HandleFunc("/api/lastheard", handleLastHeard)
-	mux.HandleFunc("/api/hotspot/servers", handleHotspotServers)
-	// Service restart: matches /api/services/{name}/restart
-	mux.HandleFunc("/api/services/", handleServiceRestart)
-	mux.HandleFunc("/api/reboot", handleReboot)
-	mux.HandleFunc("/api/shutdown", handleShutdown)
+	// Register ConnectRPC service handlers
+	path, handler := openrigv1connect.NewDeviceServiceHandler(&deviceServer{})
+	mux.Handle(path, handler)
 
-	srv := &http.Server{
-		Addr:         listenAddr,
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-	}
+	path, handler = openrigv1connect.NewHotspotServiceHandler(&hotspotServer{})
+	mux.Handle(path, handler)
+
+	path, handler = openrigv1connect.NewWifiServiceHandler(&wifiServer{})
+	mux.Handle(path, handler)
+
+	path, handler = openrigv1connect.NewRigServiceHandler(&rigServer{})
+	mux.Handle(path, handler)
 
 	log.Printf("openRig API listening on %s", listenAddr)
-	if err := srv.ListenAndServe(); err != nil {
+	if err := http.ListenAndServe(listenAddr, h2c.NewHandler(mux, &http2.Server{})); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }

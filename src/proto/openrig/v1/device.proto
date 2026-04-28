@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package openrig.v1;
+
+option go_package = "openrig/gen/openrig/v1;openrigv1";
+
+// ── Messages ──────────────────────────────────────────────────────────────
+
+message DeviceStatus {
+  bool   provisioned   = 1;
+  string device_type   = 2; // "hotspot" | "rigctl" | "console"
+  string callsign      = 3;
+  string version       = 4;
+  string hostname      = 5;
+  int32  uptime        = 6;
+  double cpu_percent   = 7;
+  int32  mem_total_mb  = 8;
+  int32  mem_used_mb   = 9;
+  double disk_total_gb = 10;
+  double disk_used_gb  = 11;
+}
+
+message DeviceConfig {
+  string callsign    = 1;
+  string hostname    = 2;
+  string timezone    = 3;
+  string name        = 4;
+  string grid_square = 5;
+}
+
+message UpdateConfigRequest {
+  DeviceConfig config = 1;
+}
+
+message RestartServiceRequest {
+  string service = 1; // "rigctld" | "mmdvmhost" | "dmrgateway" | "ysfgateway"
+}
+
+message RestartServiceResponse {}
+message RebootRequest {}
+message RebootResponse {}
+message ShutdownRequest {}
+message ShutdownResponse {}
+message Empty {}
+
+// ── Service ───────────────────────────────────────────────────────────────
+
+service DeviceService {
+  // GetStatus returns a snapshot of device metrics.
+  rpc GetStatus(Empty) returns (DeviceStatus);
+
+  // StreamStatus pushes DeviceStatus every ~5 seconds.
+  rpc StreamStatus(Empty) returns (stream DeviceStatus);
+
+  // GetConfig / UpdateConfig manage device identity.
+  rpc GetConfig(Empty)                    returns (DeviceConfig);
+  rpc UpdateConfig(UpdateConfigRequest)   returns (DeviceConfig);
+
+  // System control.
+  rpc RestartService(RestartServiceRequest) returns (RestartServiceResponse);
+  rpc Reboot(RebootRequest)                 returns (RebootResponse);
+  rpc Shutdown(ShutdownRequest)             returns (ShutdownResponse);
+}

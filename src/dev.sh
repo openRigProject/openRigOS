@@ -23,6 +23,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+echo "Building WASM client..."
+GOOS=js GOARCH=wasm go build -o /tmp/openrig.wasm ./wasm/
+
 echo "Building openrig-api..."
 (cd openrig-api && go build -o openrig-api .)
 

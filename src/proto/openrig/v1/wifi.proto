@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package openrig.v1;
+
+option go_package = "openrig/gen/openrig/v1;openrigv1";
+
+import "openrig/v1/device.proto"; // for Empty
+
+// ── Messages ──────────────────────────────────────────────────────────────
+
+message WifiNetwork {
+  string ssid     = 1;
+  string security = 2; // "wpa2", "wpa3", "open"
+  int32  priority = 3;
+  string password = 4; // omitted in responses
+}
+
+message WifiConfig {
+  repeated WifiNetwork networks = 1;
+}
+
+message UpdateWifiRequest {
+  WifiConfig config = 1;
+}
+
+message ScannedNetwork {
+  string ssid      = 1;
+  string security  = 2;
+  int32  signal_dbm = 3;
+}
+
+message ScanWifiResponse {
+  repeated ScannedNetwork networks = 1;
+}
+
+message NetworkStatus {
+  string mode       = 1; // "wifi" | "ethernet" | "ap" | "none"
+  string ssid       = 2;
+  string ip         = 3;
+  int32  signal_dbm = 4;
+  bool   connected  = 5;
+  string interface  = 6;
+}
+
+// ── Service ───────────────────────────────────────────────────────────────
+
+service WifiService {
+  rpc GetWifi(Empty)                  returns (WifiConfig);
+  rpc UpdateWifi(UpdateWifiRequest)   returns (WifiConfig);
+  rpc ScanWifi(Empty)                 returns (ScanWifiResponse);
+  rpc GetNetwork(Empty)               returns (NetworkStatus);
+}
