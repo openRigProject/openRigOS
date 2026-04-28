@@ -1,0 +1,27 @@
+[Unit]
+Description=openRig MMDVMHost — MMDVM digital voice modem host
+Documentation=https://github.com/g4klx/MMDVMHost
+After=network.target openrig-api.service
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/MMDVMHost /etc/mmdvm/MMDVM.ini
+Restart=on-failure
+RestartSec=10
+
+# Run as openrig user; dialout group grants serial/UART access.
+User=openrig
+SupplementaryGroups=dialout
+
+# Harden
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/openrig /run
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openrig-mmdvmhost
+
+[Install]
+WantedBy=multi-user.target

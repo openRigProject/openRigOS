@@ -1,0 +1,6 @@
+# Force hamlib packages to come from Debian bookworm rather than the
+# Raspberry Pi Foundation repo, which ships incompatible versions.
+# Priority 900 > default 500, so Debian wins when both repos are configured.
+Package: libhamlib-utils libhamlib4 libhamlib-dev libhamlib++-dev
+Pin: release o=Debian
+Pin-Priority: 900

@@ -1,26 +1,14 @@
-# Networking — WiFi only (no ethernet on Zero 2 W)
-wpasupplicant
-wireless-tools
-iw
-rfkill
-crda
+# RPi Zero 2 W specific packages
+# (WiFi/hostapd/dnsmasq are in packages/base.list)
 
 # Bluetooth
 bluez
 bluez-tools
 
-# USB gadget mode — virtual ethernet over micro-USB
-# (kernel module only, no extra packages needed)
-# Enable via config.txt: dtoverlay=dwc2
-# Enable via cmdline.txt: modules-load=dwc2,g_ether
-
 # Serial / GPIO (ham radio interfacing)
 python3-serial
 python3-rpi.gpio
 raspi-gpio
-
-# Ham radio essentials
-hamlib-utils
 
 # System tools
 raspi-config

@@ -9,10 +9,24 @@ udev
 openssh-server
 openssh-client
 
+# mDNS — avahi advertises <hostname>.local
+# Pre-provisioning: openrig-config.local
+# Post-provisioning: <callsign>-<device-type>.local
+avahi-daemon
+libnss-mdns
+
 # Networking
 iproute2
 iputils-ping
 net-tools
+hostapd
+dnsmasq
+wpasupplicant
+isc-dhcp-client
+wireless-tools
+iw
+rfkill
+wireless-regdb
 
 # TLS / package management
 ca-certificates
@@ -20,14 +34,17 @@ apt-utils
 apt-transport-https
 gnupg
 
-# Ham radio core library (rig control)
+# Ham radio core library (rig control) + rigctld daemon
+# libhamlib-utils is pinned to Debian via etc/apt/preferences.d/hamlib
+# to avoid version conflicts with the RPi Foundation repo.
 libhamlib4
-hamlib-utils
+libhamlib-utils
 
 # Serial port support (radio CAT control, TNC, etc.)
 minicom
 
-# System utilities
+# Config / system utilities
+jq
 curl
 wget
 rsync

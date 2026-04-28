@@ -12,15 +12,15 @@ dtparam=audio=off
 camera_auto_detect=0
 display_auto_detect=0
 
-# UART serial console (essential for headless debugging)
+# UART — PL011 (/dev/ttyAMA0) is reserved for MMDVM_HS_Hat and other
+# GPIO UART modems. Serial console is removed from cmdline.txt.
+# Bluetooth is fully disabled so PL011 is free for the modem.
 enable_uart=1
-
-# Move BT to mini-UART so PL011 is free for serial console
-dtoverlay=miniuart-bt
+dtoverlay=disable-bt
 
 # USB OTG gadget mode — virtual ethernet over the single USB port
 # Connect to Mac/Linux, get SSH without needing WiFi configured
-dtoverlay=dwc2
+dtoverlay=dwc2,dr_mode=peripheral
 
 # GPU memory — headless OS, give RAM to CPU
 gpu_mem=16

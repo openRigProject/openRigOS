@@ -17,6 +17,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Package lists were wiped in stage 03 cleanup — refresh before installing
+chroot "${ROOTFS_DIR}" apt-get update -q
+
 chroot "${ROOTFS_DIR}" bash -c "
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
         ${KERNEL_PACKAGE} \

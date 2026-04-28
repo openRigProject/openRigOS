@@ -1,0 +1,30 @@
+[Unit]
+Description=openRig Management API and Web UI
+Documentation=https://github.com/openrig/openRigOS
+After=network.target openrig-wifi.service
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStartPre=+/usr/local/lib/openrig/check-feature.sh api_enabled
+ExecStart=/usr/local/bin/openrig-api
+Restart=on-failure
+RestartSec=5
+
+User=openrig
+SupplementaryGroups=sudo
+
+# Allow binding to privileged ports (not needed for 7373, but future-proof)
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Harden
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/openrig.json /etc/wpa_supplicant /etc/avahi/services /etc/hostname /etc/hosts /etc/mmdvm /etc/dmrgateway /etc/ysfgateway /run
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openrig-api
+
+[Install]
+WantedBy=multi-user.target

@@ -24,15 +24,21 @@ case "${IMAGE_TYPE}" in
             mkpart primary ext4  257MiB 100% \
             set 1 boot on
 
-        # Mount via loop device
-        LOOP=$(losetup -fP --show "${IMAGE_PATH}")
-        BOOT_PART="${LOOP}p1"
-        ROOT_PART="${LOOP}p2"
+        # Mount via loop device + kpartx (works in Docker Desktop on Mac)
+        LOOP=$(losetup -f --show "${IMAGE_PATH}")
+        kpartx -av "${LOOP}"
+        LOOP_NAME=$(basename "${LOOP}")
+        BOOT_PART="/dev/mapper/${LOOP_NAME}p1"
+        ROOT_PART="/dev/mapper/${LOOP_NAME}p2"
+
+        # Give udev/kernel a moment to create the device nodes
+        sleep 1
 
         cleanup() {
             umount -lf /mnt/openrigos-boot 2>/dev/null || true
             umount -lf /mnt/openrigos-root 2>/dev/null || true
-            losetup -d "${LOOP}" 2>/dev/null || true
+            kpartx -dv "${LOOP}"           2>/dev/null || true
+            losetup -d "${LOOP}"           2>/dev/null || true
         }
         trap cleanup EXIT
 
@@ -54,10 +60,8 @@ case "${IMAGE_TYPE}" in
         sed -i "s|/dev/mmcblk0p1|UUID=${BOOT_UUID}|g" /mnt/openrigos-root/etc/fstab
         sed -i "s|/dev/mmcblk0p2|UUID=${ROOT_UUID}|g" /mnt/openrigos-root/etc/fstab
 
-        # Update cmdline.txt with real root UUID
-        if [ -f /mnt/openrigos-boot/cmdline.txt ]; then
-            sed -i "s|root=/dev/mmcblk0p2|root=UUID=${ROOT_UUID}|g" /mnt/openrigos-boot/cmdline.txt
-        fi
+        # Leave cmdline.txt root as /dev/mmcblk0p2 — device node is simpler
+        # and more reliable than UUID on RPi (UUID can mismatch after partial flashes)
 
         sync
         echo "[06-image] Image written: ${IMAGE_PATH}"

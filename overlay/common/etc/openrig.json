@@ -1,0 +1,126 @@
+{
+  "openrig": {
+    "version": "0.1.0",
+
+    "device": {
+      "hostname": "openrig-config",
+      "board": "__BOARD__",
+      "arch": "__ARCH__",
+      "type": "__DEVICE_TYPE__",
+      "timezone": "UTC",
+      "provisioned": false
+    },
+
+    "operator": {
+      "callsign": "",
+      "name": "",
+      "grid_square": "",
+      "country": "US",
+      "dmr_id": 0
+    },
+
+    "management": {
+      "api_enabled": true,
+      "mdns_enabled": true
+    },
+
+    "hotspot": {
+      "dmr": {
+        "enabled": false,
+        "dmr_id": 0,
+        "colorcode": 1,
+        "bm_server": "uk.brandmeister.network",
+        "bm_password": "",
+        "talkgroups": []
+      },
+      "ysf": {
+        "enabled": false,
+        "reflector": "AMERICA",
+        "suffix": "",
+        "description": ""
+      },
+      "cross_mode": {
+        "ysf2dmr_enabled": false,
+        "ysf2dmr_talkgroup": 0,
+        "dmr2ysf_enabled": false,
+        "dmr2ysf_room": ""
+      },
+      "modem": {
+        "type": "gpio_mmdvm",
+        "port": "/dev/ttyAMA0",
+        "speed": 115200,
+        "duplex": false
+      }
+    },
+
+    "radio": {
+      "rigs": [
+        {
+          "id": "rig1",
+          "enabled": false,
+          "model": "",
+          "hamlib_model_id": null,
+          "port": "/dev/ttyUSB0",
+          "baud": 9600,
+          "data_bits": 8,
+          "stop_bits": 1,
+          "parity": "none",
+          "handshake": "none"
+        }
+      ],
+      "tnc": {
+        "enabled": false,
+        "port": "/dev/ttyUSB1",
+        "baud": 9600,
+        "type": "kiss"
+      },
+      "audio": {
+        "input_device": "default",
+        "output_device": "default"
+      }
+    },
+
+    "network": {
+      "wifi": {
+        "enabled": true,
+        "country": "US",
+        "fallback_ap": {
+          "enabled": true,
+          "timeout_minutes": 2
+        }
+      },
+      "access_point": {
+        "ssid_prefix": "openRig-",
+        "channel": 6,
+        "ip": "192.168.73.1",
+        "netmask": "255.255.255.0",
+        "dhcp_range_start": "192.168.73.100",
+        "dhcp_range_end": "192.168.73.200",
+        "dhcp_lease_hours": 12
+      },
+      "usb_gadget": {
+        "enabled": false,
+        "ip": "10.55.0.1",
+        "netmask": "255.255.255.0"
+      },
+      "remote_access": {
+        "ssh_enabled": true,
+        "ssh_port": 22
+      }
+    },
+
+    "automation": {
+      "enabled": false,
+      "on_boot": [],
+      "on_connected": [],
+      "scheduled": []
+    },
+
+    "logging": {
+      "level": "info",
+      "log_dir": "/var/log/openrig",
+      "max_size_mb": 50,
+      "rotate": true
+    }
+  }
+}

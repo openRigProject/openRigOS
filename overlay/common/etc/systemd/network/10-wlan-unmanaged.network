@@ -1,0 +1,8 @@
+# Tell systemd-networkd to leave wlan0 alone.
+# openrig-wifi.service manages the wireless interface directly
+# via wpa_supplicant (station mode) or hostapd (AP mode).
+[Match]
+Name=wlan0
+
+[Link]
+Unmanaged=yes

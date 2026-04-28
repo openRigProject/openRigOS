@@ -1,0 +1,18 @@
+[Unit]
+Description=openRigOS USB Gadget Ethernet
+Documentation=https://github.com/openrig/openRigOS
+# Needs the filesystem up (for openrig.json) and udev settled (for USB)
+After=local-fs.target systemd-udevd.service
+Before=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/openrig/usb-gadget.sh
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openrig-usb-gadget
+
+[Install]
+WantedBy=multi-user.target

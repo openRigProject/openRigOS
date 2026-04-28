@@ -1,0 +1,22 @@
+# openRigOS — Raspberry Pi 4 boot config
+
+# 64-bit kernel
+arm_64bit=1
+kernel=kernel8.img
+
+# Exact DTB for RPi 4 Model B
+device_tree=bcm2711-rpi-4-b.dtb
+
+# Disable unused hardware (saves RAM and power)
+dtparam=audio=off
+camera_auto_detect=0
+display_auto_detect=0
+
+# UART — PL011 (/dev/ttyAMA0) is reserved for MMDVM_HS_Hat and other
+# GPIO UART modems. Serial console is removed from cmdline.txt.
+# Bluetooth is fully disabled so PL011 is free for the modem.
+enable_uart=1
+dtoverlay=disable-bt
+
+# GPU memory — headless OS, give RAM to CPU
+gpu_mem=16

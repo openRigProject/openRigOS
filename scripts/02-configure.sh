@@ -18,13 +18,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Hostname
-echo "openrigos" > "${ROOTFS_DIR}/etc/hostname"
+# Pre-provisioning hostname — avahi will advertise openrig-config.local
+# until provisioning sets a unique name based on callsign + device type
+echo "openrig-config" > "${ROOTFS_DIR}/etc/hostname"
 
 # Hosts
 cat > "${ROOTFS_DIR}/etc/hosts" <<EOF
 127.0.0.1   localhost
-127.0.1.1   openrigos
+127.0.1.1   openrig-config
 ::1         localhost ip6-localhost ip6-loopback
 ff02::1     ip6-allnodes
 ff02::2     ip6-allrouters
@@ -49,16 +50,18 @@ if [ -n "${EXTRA_REPOS:-}" ]; then
     echo "${EXTRA_REPOS}" >> "${ROOTFS_DIR}/etc/apt/sources.list"
 fi
 
-# Import extra repo GPG keys
+# Import extra repo GPG keys using the host gpg (not chroot — gpg isn't
+# installed in the minimal debootstrap rootfs at this stage)
 if [ -n "${EXTRA_REPO_KEY:-}" ]; then
+    mkdir -p "${ROOTFS_DIR}/etc/apt/trusted.gpg.d"
     wget -qO- "${EXTRA_REPO_KEY}" | \
-        chroot "${ROOTFS_DIR}" gpg --dearmor -o /etc/apt/trusted.gpg.d/extra-repo.gpg
+        gpg --dearmor > "${ROOTFS_DIR}/etc/apt/trusted.gpg.d/extra-repo.gpg"
 fi
 
 # Locale
-chroot "${ROOTFS_DIR}" bash -c "
+DEBIAN_FRONTEND=noninteractive chroot "${ROOTFS_DIR}" bash -c "
     apt-get update -q
-    apt-get install -y locales
+    apt-get install -y locales sudo
     echo 'en_US.UTF-8 UTF-8' > /etc/locale.gen
     locale-gen
     update-locale LANG=en_US.UTF-8
@@ -74,16 +77,61 @@ chroot "${ROOTFS_DIR}" bash -c "
 chroot "${ROOTFS_DIR}" passwd -l root
 
 # Create default ham radio user
+# dialout and audio groups may not exist yet; they'll be created when
+# the relevant packages are installed in stage 03. We add them here
+# and useradd will skip unknown groups with --groups not --G
 chroot "${ROOTFS_DIR}" bash -c "
-    useradd -m -s /bin/bash -G sudo,dialout,audio openrig
+    # Ensure sudoers.d exists (sudo just installed above)
+    mkdir -p /etc/sudoers.d
+
+    useradd -m -s /bin/bash openrig
     echo 'openrig:openrig' | chpasswd
-    echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers.d/openrig
+
+    # Force password change on first login
+    chage -d 0 openrig
+
+    echo '%sudo ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/openrig
+    chmod 440 /etc/sudoers.d/openrig
+
+    # Add to sudo group (exists now that sudo is installed)
+    usermod -aG sudo openrig
 "
 
-# Apply board-specific overlay files
+# --- Overlays (order matters: common first, board second so board wins) ---
+
+# 1. Apply common overlay (includes /etc/openrig.json base template)
+COMMON_OVERLAY="${BUILD_DIR}/overlay/common"
+if [ -d "${COMMON_OVERLAY}" ]; then
+    echo "[02-configure] Applying common overlay..."
+    rsync -a "${COMMON_OVERLAY}/" "${ROOTFS_DIR}/"
+fi
+
+# 2. Inject build-time board values into /etc/openrig.json
+OPENRIG_JSON="${ROOTFS_DIR}/etc/openrig.json"
+if [ -f "${OPENRIG_JSON}" ]; then
+    echo "[02-configure] Injecting board values into /etc/openrig.json..."
+    sed -i \
+        -e "s|\"__BOARD__\"|\"${BOARD}\"|g" \
+        -e "s|\"__ARCH__\"|\"${ARCH}\"|g" \
+        -e "s|\"__DEVICE_TYPE__\"|\"${DEVICE_TYPE:-}\"|g" \
+        "${OPENRIG_JSON}"
+
+    # Inject optional feature flags from board.conf
+    if [ "${USB_GADGET_ENABLED:-false}" = "true" ]; then
+        jq '.openrig.network.usb_gadget.enabled = true' "${OPENRIG_JSON}" \
+            > "${OPENRIG_JSON}.tmp" && mv "${OPENRIG_JSON}.tmp" "${OPENRIG_JSON}"
+    fi
+fi
+
+# 3. Apply board-specific overlay (may override/extend openrig.json sections)
 if [ -d "${BOARD_DIR}/overlay" ]; then
     echo "[02-configure] Applying board overlay..."
     rsync -a "${BOARD_DIR}/overlay/" "${ROOTFS_DIR}/"
+fi
+
+# 4. Ensure correct permissions on openrig.json
+if [ -f "${OPENRIG_JSON}" ]; then
+    chmod 644 "${OPENRIG_JSON}"
 fi
 
 echo "[02-configure] Done."

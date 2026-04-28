@@ -1,0 +1,41 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!--
+  openRigOS pre-provisioning DNS-SD service advertisement.
+
+  Advertises three services while the device is unconfigured:
+    _openrig._tcp  — device discovery for openRigConsole / openRigMobile
+    _ssh._tcp      — SSH access
+    _http._tcp     — web UI (port 80, always on)
+
+  After provisioning, openrig-provision (CLI) or the web UI rewrites this
+  file with the operator callsign, device type, and provisioned=true.
+  Avahi detects the change via inotify — no daemon restart required.
+-->
+<service-group>
+  <name replace-wildcards="yes">openRig %h</name>
+
+  <!-- Primary openRig service — browsed by Console and Mobile -->
+  <service>
+    <type>_openrig._tcp</type>
+    <port>7373</port>
+    <txt-record>provisioned=false</txt-record>
+    <txt-record>type=unconfigured</txt-record>
+    <txt-record>version=0.1.0</txt-record>
+  </service>
+
+  <!-- SSH — present on all openRig devices -->
+  <service>
+    <type>_ssh._tcp</type>
+    <port>22</port>
+  </service>
+
+  <!-- Web UI — always available (provisioning + management) -->
+  <service>
+    <type>_http._tcp</type>
+    <port>80</port>
+    <txt-record>path=/</txt-record>
+    <txt-record>openrig=provision</txt-record>
+  </service>
+
+</service-group>

@@ -1,0 +1,24 @@
+[Unit]
+Description=openRig rigctld — hamlib network rig control daemon
+Documentation=https://hamlib.github.io/
+After=network.target
+# Restart after config changes applied by openrig-provision
+PartOf=openrig-provision-web.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/openrig/rigctld-start.sh
+Restart=on-failure
+RestartSec=15
+
+# Run as the openrig user; dialout group grants serial port access.
+User=openrig
+SupplementaryGroups=dialout
+
+# Harden: no new privileges, restrict filesystem writes.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/run
+
+[Install]
+WantedBy=multi-user.target

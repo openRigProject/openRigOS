@@ -22,25 +22,27 @@ help:
 	@echo "  make build BOARD=x86_64"
 
 image:
-	docker build -t $(IMAGE_NAME) docker/
+	docker build -t $(IMAGE_NAME) -f docker/Dockerfile .
+
+DOCKER_VOLS = \
+	-v $(OUTPUT):/output \
+	-v $(PWD)/boards:/build/boards \
+	-v $(PWD)/packages:/build/packages \
+	-v $(PWD)/scripts:/build/scripts \
+	-v $(PWD)/overlay:/build/overlay \
+	-v $(PWD)/src:/build/src
 
 build: _check_board
 	@mkdir -p $(OUTPUT)
 	docker run --rm --privileged \
-	  -v $(OUTPUT):/output \
-	  -v $(PWD)/boards:/build/boards \
-	  -v $(PWD)/packages:/build/packages \
-	  -v $(PWD)/scripts:/build/scripts \
+	  $(DOCKER_VOLS) \
 	  -e BOARD=$(BOARD) \
 	  $(IMAGE_NAME)
 
 shell: _check_board
 	@mkdir -p $(OUTPUT)
 	docker run --rm -it --privileged \
-	  -v $(OUTPUT):/output \
-	  -v $(PWD)/boards:/build/boards \
-	  -v $(PWD)/packages:/build/packages \
-	  -v $(PWD)/scripts:/build/scripts \
+	  $(DOCKER_VOLS) \
 	  -e BOARD=$(BOARD) \
 	  $(IMAGE_NAME) bash
 

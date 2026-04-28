@@ -1,0 +1,25 @@
+[Unit]
+Description=openRig YSFGateway — YSF network gateway for MMDVMHost
+Documentation=https://github.com/g4klx/YSFClients
+After=network.target openrig-mmdvmhost.service
+Wants=openrig-mmdvmhost.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/YSFGateway /etc/ysfgateway/YSFGateway.ini
+Restart=on-failure
+RestartSec=10
+
+User=openrig
+
+# Harden
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/openrig /run
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openrig-ysfgateway
+
+[Install]
+WantedBy=multi-user.target

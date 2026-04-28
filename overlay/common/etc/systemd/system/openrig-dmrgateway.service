@@ -1,0 +1,25 @@
+[Unit]
+Description=openRig DMRGateway — DMR network gateway for MMDVMHost
+Documentation=https://github.com/g4klx/DMRGateway
+After=network.target openrig-mmdvmhost.service
+Wants=openrig-mmdvmhost.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/DMRGateway /etc/dmrgateway/DMRGateway.ini
+Restart=on-failure
+RestartSec=10
+
+User=openrig
+
+# Harden
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/openrig /run
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openrig-dmrgateway
+
+[Install]
+WantedBy=multi-user.target

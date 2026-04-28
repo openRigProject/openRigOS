@@ -34,9 +34,18 @@ if [ -n "${FIRMWARE_PACKAGES:-}" ]; then
     "
 fi
 
+# Refresh package lists (firmware install may have altered cache)
+chroot "${ROOTFS_DIR}" apt-get update -q
+
 # Install all other packages
 chroot "${ROOTFS_DIR}" bash -c "
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${PACKAGES}
+"
+
+# Add openrig user to hardware groups now that packages have created them
+chroot "${ROOTFS_DIR}" bash -c "
+    getent group dialout &>/dev/null && usermod -aG dialout openrig || true
+    getent group audio   &>/dev/null && usermod -aG audio   openrig || true
 "
 
 # Strip size

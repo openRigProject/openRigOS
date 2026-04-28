@@ -1,0 +1,24 @@
+[Unit]
+Description=openRigOS WiFi Manager
+Documentation=https://github.com/openrig/openRigOS
+# Run after the network interfaces are enumerated but before
+# anything that depends on the network being online
+After=sys-subsystem-net-devices-wlan0.device systemd-udevd.service
+Before=network-online.target
+Wants=sys-subsystem-net-devices-wlan0.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/openrig/wifi-manager.sh
+
+# Allow enough time for the WiFi fallback timeout + AP startup
+# Set to fallback_ap.timeout_minutes (default 2) + 60s buffer
+TimeoutStartSec=240
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openrig-wifi
+
+[Install]
+WantedBy=multi-user.target

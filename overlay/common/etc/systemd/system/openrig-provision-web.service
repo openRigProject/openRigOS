@@ -1,0 +1,20 @@
+[Unit]
+Description=openRigOS Web UI
+Documentation=https://github.com/openrig/openRigOS
+After=network.target openrig-wifi.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/openrig-provision-web
+Restart=on-failure
+RestartSec=5
+
+# Run as root — needed to write /etc/openrig.json, chpasswd, restart services
+User=root
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openrig-provision-web
+
+[Install]
+WantedBy=multi-user.target
