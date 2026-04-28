@@ -1416,27 +1416,35 @@ func handleHotspotServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	network := r.URL.Query().Get("network")
+
+	// Cache hit — return immediately.
 	if servers, ok := getCachedServers(network); ok {
 		jsonOK(w, map[string][]string{"servers": servers})
 		return
 	}
-	var servers []string
-	switch {
-	case network == "brandmeister" && !devMode:
-		servers = fetchBrandmeisterServers()
-	case network == "ysf" && !devMode:
-		servers = fetchHostsFile("https://www.pistar.uk/downloads/YSFHosts.txt", hardcodedServers["ysf"])
-	case network == "fcs" && !devMode:
-		servers = fetchHostsFile("https://www.pistar.uk/downloads/FCSHosts.txt", hardcodedServers["fcs"])
-	default:
-		if s, ok := hardcodedServers[network]; ok {
-			servers = s
-		} else {
-			servers = []string{}
-		}
+
+	// Return the hardcoded list right away so the UI isn't blocked,
+	// then fetch the live list in the background to warm the cache.
+	immediate := hardcodedServers[network]
+	if immediate == nil {
+		immediate = []string{}
 	}
-	setCachedServers(network, servers)
-	jsonOK(w, map[string][]string{"servers": servers})
+	jsonOK(w, map[string][]string{"servers": immediate})
+
+	go func() {
+		var live []string
+		switch network {
+		case "brandmeister":
+			live = fetchBrandmeisterServers()
+		case "ysf":
+			live = fetchHostsFile("https://www.pistar.uk/downloads/YSFHosts.txt", hardcodedServers["ysf"])
+		case "fcs":
+			live = fetchHostsFile("https://www.pistar.uk/downloads/FCSHosts.txt", hardcodedServers["fcs"])
+		default:
+			return
+		}
+		setCachedServers(network, live)
+	}()
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
