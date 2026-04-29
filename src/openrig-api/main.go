@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"io"
 	"fmt"
 	"log"
 	"math"
@@ -762,10 +763,82 @@ var hardcodedServers = map[string][]string{
 }
 
 var (
-	srvCacheMu  sync.Mutex
-	srvCacheVal = make(map[string][]string)
-	srvCacheExp = make(map[string]time.Time)
+	srvCacheMu   sync.Mutex
+	srvCacheVal  = make(map[string][]string)
+	srvCacheExp  = make(map[string]time.Time)
+	srvDiskCache string // set in main(); empty disables disk persistence
 )
+
+type diskCacheEntry struct {
+	Servers   []string  `json:"servers"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func loadDiskCache() {
+	if srvDiskCache == "" {
+		return
+	}
+	data, err := os.ReadFile(srvDiskCache)
+	if err != nil {
+		if devMode && !os.IsNotExist(err) {
+			log.Printf("[cache] failed to read disk cache %s: %v", srvDiskCache, err)
+		}
+		return
+	}
+	var dc map[string]diskCacheEntry
+	if err := json.Unmarshal(data, &dc); err != nil {
+		if devMode {
+			log.Printf("[cache] failed to parse disk cache: %v", err)
+		}
+		return
+	}
+	srvCacheMu.Lock()
+	defer srvCacheMu.Unlock()
+	now := time.Now()
+	loaded := 0
+	for network, entry := range dc {
+		if entry.ExpiresAt.After(now) {
+			srvCacheVal[network] = entry.Servers
+			srvCacheExp[network] = entry.ExpiresAt
+			loaded++
+		}
+	}
+	if devMode {
+		log.Printf("[cache] loaded %d network(s) from disk cache %s", loaded, srvDiskCache)
+	}
+}
+
+func saveDiskCache() {
+	if srvDiskCache == "" {
+		return
+	}
+	srvCacheMu.Lock()
+	dc := make(map[string]diskCacheEntry, len(srvCacheVal))
+	for network, servers := range srvCacheVal {
+		dc[network] = diskCacheEntry{Servers: servers, ExpiresAt: srvCacheExp[network]}
+	}
+	srvCacheMu.Unlock()
+
+	if err := os.MkdirAll(filepath.Dir(srvDiskCache), 0755); err != nil {
+		if devMode {
+			log.Printf("[cache] failed to create cache dir: %v", err)
+		}
+		return
+	}
+	data, err := json.MarshalIndent(dc, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(srvDiskCache, data, 0644); err != nil {
+		if devMode {
+			log.Printf("[cache] failed to write disk cache: %v", err)
+		}
+		return
+	}
+	if devMode {
+		log.Printf("[cache] saved %d network(s) to disk cache %s", len(dc), srvDiskCache)
+	}
+}
 
 func getCachedServers(network string) ([]string, bool) {
 	srvCacheMu.Lock()
@@ -779,9 +852,10 @@ func getCachedServers(network string) ([]string, bool) {
 
 func setCachedServers(network string, servers []string) {
 	srvCacheMu.Lock()
-	defer srvCacheMu.Unlock()
 	srvCacheVal[network] = servers
 	srvCacheExp[network] = time.Now().Add(2 * time.Hour)
+	srvCacheMu.Unlock()
+	go saveDiskCache()
 }
 
 // fetchDvrefServers fetches the YSF reflector list from dvref.com.
@@ -789,44 +863,88 @@ func setCachedServers(network string, servers []string) {
 // FCS rooms are not available via dvref.com and always use the hardcoded list.
 func fetchDvrefServers(network string, fallback []string) []string {
 	if network != "ysf" {
+		if devMode {
+			log.Printf("[dvref] no endpoint for network %q, using hardcoded fallback (%d entries)", network, len(fallback))
+		}
 		return fallback
 	}
 	token := os.Getenv("DVREF_API_TOKEN")
 	if token == "" {
+		if devMode {
+			log.Printf("[dvref] DVREF_API_TOKEN not set, using hardcoded fallback (%d entries)", len(fallback))
+		}
 		return fallback
+	}
+
+	if devMode {
+		log.Printf("[dvref] fetching YSF reflectors from dvref.com ...")
 	}
 
 	client := &http.Client{Timeout: 2500 * time.Millisecond}
 	req, err := http.NewRequest("GET", "https://dvref.com/api/v2/ysf/reflectors/", nil)
 	if err != nil {
+		if devMode {
+			log.Printf("[dvref] failed to build request: %v", err)
+		}
 		return fallback
 	}
 	req.Header.Set("Authorization", "Token "+token)
 
 	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != 200 {
+	if err != nil {
+		if devMode {
+			log.Printf("[dvref] request failed: %v", err)
+		}
 		return fallback
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		if devMode {
+			log.Printf("[dvref] unexpected status %d, using hardcoded fallback", resp.StatusCode)
+		}
+		return fallback
+	}
 
-	var data []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		if devMode {
+			log.Printf("[dvref] failed to read response body: %v", err)
+		}
+		return fallback
+	}
+
+	var envelope struct {
+		Data struct {
+			Reflectors []struct {
+				Name string `json:"name"`
+			} `json:"reflectors"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(bodyBytes, &envelope); err != nil {
+		if devMode {
+			log.Printf("[dvref] JSON decode error: %v", err)
+		}
 		return fallback
 	}
 
 	seen := make(map[string]bool)
 	var names []string
-	for _, item := range data {
-		name, _ := item["name"].(string)
-		if name != "" && !seen[name] {
-			names = append(names, name)
-			seen[name] = true
+	for _, r := range envelope.Data.Reflectors {
+		if r.Name != "" && !seen[r.Name] {
+			names = append(names, r.Name)
+			seen[r.Name] = true
 		}
 	}
 	if len(names) == 0 {
+		if devMode {
+			log.Printf("[dvref] response contained no names, using hardcoded fallback")
+		}
 		return fallback
 	}
 	sort.Strings(names)
+	if devMode {
+		log.Printf("[dvref] loaded %d YSF reflectors from dvref.com", len(names))
+	}
 	return names
 }
 
@@ -1389,6 +1507,7 @@ func main() {
 	flag.Parse()
 
 	if devMode {
+		srvDiskCache = "/tmp/openrig-server-cache.json"
 		configPath = "./openrig.json"
 		wpaConfPath = "./wpa_supplicant-dev.conf"
 		if _, err := os.Stat(configPath); os.IsNotExist(err) {
@@ -1398,8 +1517,12 @@ func main() {
 			}
 			log.Printf("[dev] Created seed config at %s", configPath)
 		}
-		log.Printf("[dev] Dev mode enabled — config: %s, addr: %s", configPath, listenAddr)
+			log.Printf("[dev] Dev mode enabled — config: %s, addr: %s", configPath, listenAddr)
+	} else {
+		srvDiskCache = "/var/cache/openrig/server-cache.json"
 	}
+
+	loadDiskCache()
 
 	mux := http.NewServeMux()
 
