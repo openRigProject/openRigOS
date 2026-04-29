@@ -781,26 +781,43 @@ func setCachedServers(network string, servers []string) {
 	srvCacheMu.Lock()
 	defer srvCacheMu.Unlock()
 	srvCacheVal[network] = servers
-	srvCacheExp[network] = time.Now().Add(time.Hour)
+	srvCacheExp[network] = time.Now().Add(2 * time.Hour)
 }
 
-func fetchHostsFile(url string, fallback []string) []string {
+// fetchDvrefServers fetches the YSF reflector list from dvref.com.
+// Requires DVREF_API_TOKEN env var; falls back to hardcoded if unset or on error.
+// FCS rooms are not available via dvref.com and always use the hardcoded list.
+func fetchDvrefServers(network string, fallback []string) []string {
+	if network != "ysf" {
+		return fallback
+	}
+	token := os.Getenv("DVREF_API_TOKEN")
+	if token == "" {
+		return fallback
+	}
+
 	client := &http.Client{Timeout: 2500 * time.Millisecond}
-	resp, err := client.Get(url)
+	req, err := http.NewRequest("GET", "https://dvref.com/api/v2/ysf/reflectors/", nil)
+	if err != nil {
+		return fallback
+	}
+	req.Header.Set("Authorization", "Token "+token)
+
+	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != 200 {
 		return fallback
 	}
 	defer resp.Body.Close()
+
+	var data []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return fallback
+	}
+
 	seen := make(map[string]bool)
 	var names []string
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, ";", 2)
-		name := strings.TrimSpace(parts[0])
+	for _, item := range data {
+		name, _ := item["name"].(string)
 		if name != "" && !seen[name] {
 			names = append(names, name)
 			seen[name] = true
@@ -848,7 +865,7 @@ func fetchBrandmeisterServers() []string {
 }
 
 func getServersForNetwork(network string) []string {
-	// Cache hit — return immediately (cache TTL is 1 hour)
+	// Cache hit — return immediately (cache TTL is 2 hours)
 	if servers, ok := getCachedServers(network); ok {
 		return servers
 	}
@@ -861,9 +878,9 @@ func getServersForNetwork(network string) []string {
 		case "brandmeister":
 			live = fetchBrandmeisterServers()
 		case "ysf":
-			live = fetchHostsFile("https://www.pistar.uk/downloads/YSFHosts.txt", hardcodedServers["ysf"])
+			live = fetchDvrefServers("ysf", hardcodedServers["ysf"])
 		case "fcs":
-			live = fetchHostsFile("https://www.pistar.uk/downloads/FCSHosts.txt", hardcodedServers["fcs"])
+			live = fetchDvrefServers("fcs", hardcodedServers["fcs"])
 		default:
 			done <- hardcodedServers[network]
 			return
@@ -1408,6 +1425,14 @@ func main() {
 	)
 	mux.Handle(grpcreflect.NewHandlerV1(reflector))
 	mux.Handle(grpcreflect.NewHandlerV1Alpha(reflector))
+
+	// Warm the server-list cache in the background so the first UI request
+	// is served instantly rather than waiting on a live fetch.
+	go func() {
+		for _, network := range []string{"brandmeister", "ysf", "fcs"} {
+			getServersForNetwork(network)
+		}
+	}()
 
 	log.Printf("openRig API listening on %s", listenAddr)
 	if err := http.ListenAndServe(listenAddr, h2c.NewHandler(mux, &http2.Server{})); err != nil {
