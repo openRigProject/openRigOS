@@ -1385,9 +1385,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
       <option value="custom">Custom</option>
     </select>
     <label>Server</label>
-    <input type="text" id="dmr-server" list="dmr-server-list" placeholder="Loading servers...">
-    <datalist id="dmr-server-list"></datalist>
-    <p class="hint">Select from list or enter a custom server address.</p>
+    <select id="dmr-server"><option value="">Loading...</option></select>
     <label>Password</label>
     <input type="password" id="dmr-password" placeholder="DMR network password">
     <div class="card-title" style="margin-top:1.25rem">Talkgroups</div>
@@ -1411,13 +1409,11 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     </select>
     <div id="ysf-reflector-group">
       <label>Reflector</label>
-      <input type="text" id="ysf-reflector" list="ysf-reflector-list" placeholder="Loading reflectors...">
-      <datalist id="ysf-reflector-list"></datalist>
+      <select id="ysf-reflector"><option value="">Loading...</option></select>
     </div>
     <div id="ysf-fcs-group" style="display:none">
       <label>FCS Room</label>
-      <input type="text" id="fcs-room" list="fcs-room-list" placeholder="Loading rooms...">
-      <datalist id="fcs-room-list"></datalist>
+      <select id="fcs-room"><option value="">Loading...</option></select>
       <label>Module</label>
       <select id="fcs-module">
         <option value="A">A</option><option value="B">B</option><option value="C">C</option>
@@ -1584,36 +1580,34 @@ function renderStatus(d){
   document.getElementById('st-provisioned').textContent=d.provisioned?'Yes':'No';
   document.getElementById('status-badge').textContent=d.callsign?d.callsign+' \u00b7 '+d.deviceType:'Not provisioned';
 }
-function loadDmrServerList(network,preserveValue){
+function loadDmrServerList(network,savedValue){
   var s=document.getElementById('dmr-server');
-  var dl=document.getElementById('dmr-server-list');
-  if(!preserveValue){s.value='';s.placeholder='Loading...';}
+  s.innerHTML='<option value="">Loading...</option>';
   openrig.getServers(network).then(function(d){
     var servers=d.servers||[];
-    dl.innerHTML=servers.map(function(sv){return'<option value="'+esc(sv)+'">';}).join('');
-    if(!preserveValue&&servers.length>0)s.value=servers[0];
-    s.placeholder='Select or enter server';
-  }).catch(function(){s.placeholder='Enter server address';});
+    if(savedValue&&servers.indexOf(savedValue)<0)servers=[savedValue].concat(servers);
+    s.innerHTML=servers.map(function(sv){return'<option value="'+esc(sv)+'">'+esc(sv)+'</option>';}).join('');
+    s.value=savedValue||(servers.length>0?servers[0]:'');
+  }).catch(function(e){console.error('getServers('+network+') failed:',e);s.innerHTML='';});
 }
-function onDmrNetworkChange(){loadDmrServerList(document.getElementById('dmr-network').value,false);}
-function loadYsfList(network,inputId,datalistId,preserveValue){
+function onDmrNetworkChange(){loadDmrServerList(document.getElementById('dmr-network').value,'');}
+function loadYsfList(network,inputId,savedValue){
   var inp=document.getElementById(inputId);
-  var dl=document.getElementById(datalistId);
-  if(!preserveValue){inp.placeholder='Loading...';}
+  inp.innerHTML='<option value="">Loading...</option>';
   openrig.getServers(network).then(function(d){
     var items=d.servers||[];
-    dl.innerHTML=items.map(function(v){return'<option value="'+esc(v)+'">';}).join('');
-    if(!preserveValue&&!inp.value&&items.length>0)inp.value=items[0];
-    inp.placeholder='';
-  }).catch(function(){inp.placeholder='Enter manually';});
+    if(savedValue&&items.indexOf(savedValue)<0)items=[savedValue].concat(items);
+    inp.innerHTML=items.map(function(v){return'<option value="'+esc(v)+'">'+esc(v)+'</option>';}).join('');
+    inp.value=savedValue||(items.length>0?items[0]:'');
+  }).catch(function(e){console.error('getServers('+network+') failed:',e);inp.innerHTML='';});
 }
 function onYsfNetworkChange(){
   var n=document.getElementById('ysf-network').value;
   document.getElementById('ysf-reflector-group').style.display=n==='ysf'?'':'none';
   document.getElementById('ysf-fcs-group').style.display=n==='fcs'?'':'none';
   document.getElementById('ysf-custom-group').style.display=n==='custom'?'':'none';
-  if(n==='ysf')loadYsfList('ysf','ysf-reflector','ysf-reflector-list',false);
-  else if(n==='fcs')loadYsfList('fcs','fcs-room','fcs-room-list',false);
+  if(n==='ysf')loadYsfList('ysf','ysf-reflector','');
+  else if(n==='fcs')loadYsfList('fcs','fcs-room','');
 }
 function timeAgo(ts){var d=Math.floor((Date.now()-new Date(ts).getTime())/1000);if(d<60)return d+'s ago';if(d<3600)return Math.floor(d/60)+'m ago';if(d<86400)return Math.floor(d/3600)+'h ago';return Math.floor(d/86400)+'d ago';}
 var lastHeardEntries=[];
@@ -1654,8 +1648,7 @@ function loadHotspot(){
     document.getElementById('dmr-enabled').checked=d.dmr.enabled;
     document.getElementById('dmr-colorcode').value=d.dmr.colorcode||1;
     document.getElementById('dmr-network').value=d.dmr.network||'brandmeister';
-    document.getElementById('dmr-server').value=d.dmr.server||'';
-    loadDmrServerList(d.dmr.network||'brandmeister',true);
+    loadDmrServerList(d.dmr.network||'brandmeister',d.dmr.server||'');
     document.getElementById('dmr-password').value=d.dmr.password||'';
     talkgroups=d.dmr.talkgroups||[];
     renderTalkgroups();
@@ -1667,15 +1660,15 @@ function loadHotspot(){
     document.getElementById('ysf-reflector-group').style.display=yn==='ysf'?'':'none';
     document.getElementById('ysf-fcs-group').style.display=yn==='fcs'?'':'none';
     document.getElementById('ysf-custom-group').style.display=yn==='custom'?'':'none';
-    if(yn==='fcs'){document.getElementById('fcs-room').value=d.ysf.reflector||'';document.getElementById('fcs-module').value=d.ysf.module||'A';loadYsfList('fcs','fcs-room','fcs-room-list',true);}
+    if(yn==='fcs'){document.getElementById('fcs-module').value=d.ysf.module||'A';loadYsfList('fcs','fcs-room',d.ysf.reflector||'');}
     else if(yn==='custom'){document.getElementById('ysf-custom-server').value=d.ysf.reflector||'';}
-    else{document.getElementById('ysf-reflector').value=d.ysf.reflector||'';loadYsfList('ysf','ysf-reflector','ysf-reflector-list',true);}
+    else{loadYsfList('ysf','ysf-reflector',d.ysf.reflector||'');}
     document.getElementById('ysf-description').value=d.ysf.description||'';
     document.getElementById('ysf2dmr-enabled').checked=d.crossMode.ysf2dmrEnabled;
     document.getElementById('ysf2dmr-tg').value=d.crossMode.ysf2dmrTalkgroup||'';
     document.getElementById('dmr2ysf-enabled').checked=d.crossMode.dmr2ysfEnabled;
     document.getElementById('dmr2ysf-room').value=d.crossMode.dmr2ysfRoom||'';
-  }).catch(function(){});
+  }).catch(function(e){console.error('loadHotspot failed:',e);});
 }
 function renderTalkgroups(){
   var tb=document.getElementById('tg-body');
@@ -1771,7 +1764,10 @@ function initPage(){
 var go=new Go();
 WebAssembly.instantiateStreaming(fetch('/openrig.wasm'),go.importObject).then(function(result){
   go.run(result.instance);
-  initPage();
+  (function waitForOpenrig(){
+    if(typeof openrig!=='undefined'){initPage();}
+    else{setTimeout(waitForOpenrig,10);}
+  })();
 });
 </script>
 </body>
