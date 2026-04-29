@@ -15,13 +15,14 @@ message Talkgroup {
 }
 
 message DMRConfig {
-  bool              enabled     = 1;
-  int32             dmr_id      = 2;
-  int32             colorcode   = 3;
-  string            network     = 4; // "brandmeister"|"dmrplus"|"freedmr"|"tgif"|"systemx"|"xlx"|"custom"
-  string            server      = 5;
-  string            password    = 6;
-  repeated Talkgroup talkgroups = 7;
+  bool              enabled        = 1;
+  int32             dmr_id         = 2;
+  int32             colorcode      = 3;
+  string            network        = 4; // "brandmeister"|"dmrplus"|"freedmr"|"tgif"|"systemx"|"xlx"|"custom"
+  string            server         = 5;
+  string            password       = 6;
+  repeated Talkgroup talkgroups    = 7;
+  int32             dmr_id_suffix  = 8; // 0–99; appended to dmr_id for the effective hotspot ID
 }
 
 message YSFConfig {
@@ -70,6 +71,9 @@ message GetServersRequest {
 
 message GetServersResponse {
   repeated string servers = 1;
+  // labels[i] is the human-readable display string for servers[i].
+  // If empty for a given index, the server value itself is used as the label.
+  repeated string labels  = 2;
 }
 
 message LastHeardEntry {

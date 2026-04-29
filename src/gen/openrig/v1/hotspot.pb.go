@@ -90,6 +90,7 @@ type DMRConfig struct {
 	Server        string                 `protobuf:"bytes,5,opt,name=server,proto3" json:"server,omitempty"`
 	Password      string                 `protobuf:"bytes,6,opt,name=password,proto3" json:"password,omitempty"`
 	Talkgroups    []*Talkgroup           `protobuf:"bytes,7,rep,name=talkgroups,proto3" json:"talkgroups,omitempty"`
+	DmrIdSuffix   int32                  `protobuf:"varint,8,opt,name=dmr_id_suffix,json=dmrIdSuffix,proto3" json:"dmr_id_suffix,omitempty"` // 0–99; appended to dmr_id for the effective hotspot ID
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -171,6 +172,13 @@ func (x *DMRConfig) GetTalkgroups() []*Talkgroup {
 		return x.Talkgroups
 	}
 	return nil
+}
+
+func (x *DMRConfig) GetDmrIdSuffix() int32 {
+	if x != nil {
+		return x.DmrIdSuffix
+	}
+	return 0
 }
 
 type YSFConfig struct {
@@ -630,8 +638,11 @@ func (x *GetServersRequest) GetNetwork() string {
 }
 
 type GetServersResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Servers       []string               `protobuf:"bytes,1,rep,name=servers,proto3" json:"servers,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Servers []string               `protobuf:"bytes,1,rep,name=servers,proto3" json:"servers,omitempty"`
+	// labels[i] is the human-readable display string for servers[i].
+	// If empty for a given index, the server value itself is used as the label.
+	Labels        []string `protobuf:"bytes,2,rep,name=labels,proto3" json:"labels,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -669,6 +680,13 @@ func (*GetServersResponse) Descriptor() ([]byte, []int) {
 func (x *GetServersResponse) GetServers() []string {
 	if x != nil {
 		return x.Servers
+	}
+	return nil
+}
+
+func (x *GetServersResponse) GetLabels() []string {
+	if x != nil {
+		return x.Labels
 	}
 	return nil
 }
@@ -758,7 +776,7 @@ const file_openrig_v1_hotspot_proto_rawDesc = "" +
 	"\tTalkgroup\x12\x0e\n" +
 	"\x02tg\x18\x01 \x01(\x05R\x02tg\x12\x12\n" +
 	"\x04slot\x18\x02 \x01(\x05R\x04slot\x12\x12\n" +
-	"\x04name\x18\x03 \x01(\tR\x04name\"\xdf\x01\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\"\x83\x02\n" +
 	"\tDMRConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x15\n" +
 	"\x06dmr_id\x18\x02 \x01(\x05R\x05dmrId\x12\x1c\n" +
@@ -768,7 +786,8 @@ const file_openrig_v1_hotspot_proto_rawDesc = "" +
 	"\bpassword\x18\x06 \x01(\tR\bpassword\x125\n" +
 	"\n" +
 	"talkgroups\x18\a \x03(\v2\x15.openrig.v1.TalkgroupR\n" +
-	"talkgroups\"\xaf\x01\n" +
+	"talkgroups\x12\"\n" +
+	"\rdmr_id_suffix\x18\b \x01(\x05R\vdmrIdSuffix\"\xaf\x01\n" +
 	"\tYSFConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x18\n" +
 	"\anetwork\x18\x02 \x01(\tR\anetwork\x12\x1c\n" +
@@ -798,9 +817,10 @@ const file_openrig_v1_hotspot_proto_rawDesc = "" +
 	"\x06dmr_id\x18\x01 \x01(\x05R\x05dmrId\"\x15\n" +
 	"\x13UpdateDmrIdResponse\"-\n" +
 	"\x11GetServersRequest\x12\x18\n" +
-	"\anetwork\x18\x01 \x01(\tR\anetwork\".\n" +
+	"\anetwork\x18\x01 \x01(\tR\anetwork\"F\n" +
 	"\x12GetServersResponse\x12\x18\n" +
-	"\aservers\x18\x01 \x03(\tR\aservers\"\x8e\x01\n" +
+	"\aservers\x18\x01 \x03(\tR\aservers\x12\x16\n" +
+	"\x06labels\x18\x02 \x03(\tR\x06labels\"\x8e\x01\n" +
 	"\x0eLastHeardEntry\x12\x1a\n" +
 	"\bcallsign\x18\x01 \x01(\tR\bcallsign\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x12\n" +

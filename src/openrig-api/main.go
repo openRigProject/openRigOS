@@ -323,6 +323,18 @@ var validServices = map[string]string{
 	"ysfgateway": "openrig-ysfgateway.service",
 }
 
+func doStopService(name string) error {
+	if devMode {
+		log.Printf("[dev] stopService(%q) skipped", name)
+		return nil
+	}
+	unit, ok := validServices[name]
+	if !ok {
+		return fmt.Errorf("unknown service: %s", name)
+	}
+	return exec.Command("systemctl", "stop", unit).Run()
+}
+
 func doRestartService(name string) error {
 	if devMode {
 		log.Printf("[dev] restartService(%q) skipped", name)
@@ -557,8 +569,9 @@ func buildHotspotConfig(cfg map[string]any) *openrigv1.HotspotConfig {
 	return &openrigv1.HotspotConfig{
 		Dmr: &openrigv1.DMRConfig{
 			Enabled:    getBool(cfg, "openrig.hotspot.dmr.enabled"),
-			DmrId:      int32(getFloat(cfg, "openrig.hotspot.dmr.dmr_id")),
-			Colorcode:  int32(getFloat(cfg, "openrig.hotspot.dmr.colorcode")),
+			DmrId:        int32(getFloat(cfg, "openrig.hotspot.dmr.dmr_id")),
+			DmrIdSuffix:  int32(getFloat(cfg, "openrig.hotspot.dmr.dmr_id_suffix")),
+			Colorcode:    int32(getFloat(cfg, "openrig.hotspot.dmr.colorcode")),
 			Network:    network,
 			Server:     server,
 			Password:   getString(cfg, "openrig.hotspot.dmr.password", ""),
@@ -762,16 +775,38 @@ var hardcodedServers = map[string][]string{
 	"systemx": {"xlx307.opendigital.radio"},
 }
 
+// dvrefReflector holds the full connection details for a YSF reflector from dvref.com.
+type dvrefReflector struct {
+	Name        string `json:"name"`
+	Designator  string `json:"designator"`  // 5-digit numeric ID, e.g. "00029"
+	Description string `json:"description"` // short description, e.g. "JONS YSF ROOM"
+	DNS         string `json:"dns"`         // preferred hostname for connection
+	IPv4        string `json:"ipv4"`        // static IP fallback
+	Port        int    `json:"port"`        // UDP port, usually 42000
+	Country     string `json:"country"`     // ISO 3166-1 alpha-2
+}
+
+// host returns the best available address for connecting: DNS preferred, then IPv4.
+func (r dvrefReflector) host() string {
+	if r.DNS != "" {
+		return r.DNS
+	}
+	return r.IPv4
+}
+
 var (
 	srvCacheMu   sync.Mutex
 	srvCacheVal  = make(map[string][]string)
+	srvRefCache  = make(map[string][]dvrefReflector) // full reflector data for YSF
 	srvCacheExp  = make(map[string]time.Time)
 	srvDiskCache string // set in main(); empty disables disk persistence
+	ysfHostsPath string // set in main(); path to write YSFHosts.txt
 )
 
 type diskCacheEntry struct {
-	Servers   []string  `json:"servers"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Servers    []string         `json:"servers"`
+	Reflectors []dvrefReflector `json:"reflectors,omitempty"` // full data for YSF
+	ExpiresAt  time.Time        `json:"expires_at"`
 }
 
 func loadDiskCache() {
@@ -793,19 +828,24 @@ func loadDiskCache() {
 		return
 	}
 	srvCacheMu.Lock()
-	defer srvCacheMu.Unlock()
 	now := time.Now()
 	loaded := 0
 	for network, entry := range dc {
 		if entry.ExpiresAt.After(now) {
 			srvCacheVal[network] = entry.Servers
 			srvCacheExp[network] = entry.ExpiresAt
+			if len(entry.Reflectors) > 0 {
+				srvRefCache[network] = entry.Reflectors
+			}
 			loaded++
 		}
 	}
+	srvCacheMu.Unlock()
 	if devMode {
 		log.Printf("[cache] loaded %d network(s) from disk cache %s", loaded, srvDiskCache)
 	}
+	// Regenerate hosts files from the cached reflector data.
+	go writeYsfHostsFile()
 }
 
 func saveDiskCache() {
@@ -815,7 +855,11 @@ func saveDiskCache() {
 	srvCacheMu.Lock()
 	dc := make(map[string]diskCacheEntry, len(srvCacheVal))
 	for network, servers := range srvCacheVal {
-		dc[network] = diskCacheEntry{Servers: servers, ExpiresAt: srvCacheExp[network]}
+		dc[network] = diskCacheEntry{
+			Servers:    servers,
+			Reflectors: srvRefCache[network],
+			ExpiresAt:  srvCacheExp[network],
+		}
 	}
 	srvCacheMu.Unlock()
 
@@ -838,6 +882,7 @@ func saveDiskCache() {
 	if devMode {
 		log.Printf("[cache] saved %d network(s) to disk cache %s", len(dc), srvDiskCache)
 	}
+	writeYsfHostsFile()
 }
 
 func getCachedServers(network string) ([]string, bool) {
@@ -858,35 +903,107 @@ func setCachedServers(network string, servers []string) {
 	go saveDiskCache()
 }
 
-// fetchDvrefServers fetches the YSF reflector list from dvref.com.
-// Requires DVREF_API_TOKEN env var; falls back to hardcoded if unset or on error.
-// FCS rooms are not available via dvref.com and always use the hardcoded list.
-func fetchDvrefServers(network string, fallback []string) []string {
-	if network != "ysf" {
-		if devMode {
-			log.Printf("[dvref] no endpoint for network %q, using hardcoded fallback (%d entries)", network, len(fallback))
-		}
-		return fallback
+// setCachedReflectors stores full dvref reflector data and updates the name list.
+func setCachedReflectors(network string, reflectors []dvrefReflector) {
+	names := make([]string, len(reflectors))
+	for i, r := range reflectors {
+		names[i] = r.Name
 	}
+	srvCacheMu.Lock()
+	srvCacheVal[network] = names
+	srvRefCache[network] = reflectors
+	srvCacheExp[network] = time.Now().Add(2 * time.Hour)
+	srvCacheMu.Unlock()
+	go saveDiskCache()
+}
+
+// writeYsfHostsFile generates YSFHosts.txt from the cached dvref reflector list.
+// YSFGateway reads this file to resolve reflector names (e.g. "AMERICA") to
+// an IP/hostname and port.
+//
+// Format (semicolon-delimited, one entry per line):
+//
+//	designator;name;description;host;port;000;
+//
+// e.g.  99714;US-WB0VTM ROOM;JONS YSF ROOM;50.40.173.239;42006;000;
+func writeYsfHostsFile() {
+	if ysfHostsPath == "" {
+		return
+	}
+	srvCacheMu.Lock()
+	reflectors := srvRefCache["ysf"]
+	srvCacheMu.Unlock()
+
+	if len(reflectors) == 0 {
+		if devMode {
+			log.Printf("[hosts] no YSF reflector data cached yet, skipping YSFHosts.txt write")
+		}
+		return
+	}
+
+	sorted := make([]dvrefReflector, len(reflectors))
+	copy(sorted, reflectors)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Designator < sorted[j].Designator
+	})
+
+	var sb strings.Builder
+	written := 0
+	for _, r := range sorted {
+		h := r.host()
+		if h == "" {
+			continue // skip reflectors with no address
+		}
+		port := r.Port
+		if port == 0 {
+			port = 42000
+		}
+		fmt.Fprintf(&sb, "%s;%s;%s;%s;%d;000;\n",
+			r.Designator, r.Name, r.Description, h, port)
+		written++
+	}
+
+	if err := os.MkdirAll(filepath.Dir(ysfHostsPath), 0755); err != nil {
+		if devMode {
+			log.Printf("[hosts] failed to create dir for %s: %v", ysfHostsPath, err)
+		}
+		return
+	}
+	if err := os.WriteFile(ysfHostsPath, []byte(sb.String()), 0644); err != nil {
+		if devMode {
+			log.Printf("[hosts] failed to write %s: %v", ysfHostsPath, err)
+		}
+		return
+	}
+	if devMode {
+		log.Printf("[hosts] wrote %d reflectors to %s", written, ysfHostsPath)
+	}
+}
+
+// fetchDvrefReflectors fetches full YSF reflector records from dvref.com.
+// Requires DVREF_API_TOKEN env var; returns nil on failure so the caller can
+// fall back to the hardcoded name list.
+// FCS rooms are not available via dvref.com.
+func fetchDvrefReflectors() []dvrefReflector {
 	token := os.Getenv("DVREF_API_TOKEN")
 	if token == "" {
 		if devMode {
-			log.Printf("[dvref] DVREF_API_TOKEN not set, using hardcoded fallback (%d entries)", len(fallback))
+			log.Printf("[dvref] DVREF_API_TOKEN not set, skipping dvref.com fetch")
 		}
-		return fallback
+		return nil
 	}
 
 	if devMode {
 		log.Printf("[dvref] fetching YSF reflectors from dvref.com ...")
 	}
 
-	client := &http.Client{Timeout: 2500 * time.Millisecond}
+	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", "https://dvref.com/api/v2/ysf/reflectors/", nil)
 	if err != nil {
 		if devMode {
 			log.Printf("[dvref] failed to build request: %v", err)
 		}
-		return fallback
+		return nil
 	}
 	req.Header.Set("Authorization", "Token "+token)
 
@@ -895,14 +1012,14 @@ func fetchDvrefServers(network string, fallback []string) []string {
 		if devMode {
 			log.Printf("[dvref] request failed: %v", err)
 		}
-		return fallback
+		return nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		if devMode {
-			log.Printf("[dvref] unexpected status %d, using hardcoded fallback", resp.StatusCode)
+			log.Printf("[dvref] unexpected status %d", resp.StatusCode)
 		}
-		return fallback
+		return nil
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
@@ -910,13 +1027,19 @@ func fetchDvrefServers(network string, fallback []string) []string {
 		if devMode {
 			log.Printf("[dvref] failed to read response body: %v", err)
 		}
-		return fallback
+		return nil
 	}
 
 	var envelope struct {
 		Data struct {
 			Reflectors []struct {
-				Name string `json:"name"`
+				Name        string `json:"name"`
+				Designator  string `json:"designator"`
+				Description string `json:"description"`
+				DNS         string `json:"dns"`
+				IPv4        string `json:"ipv4"`
+				Port        int    `json:"port"`
+				Country     string `json:"country"`
 			} `json:"reflectors"`
 		} `json:"data"`
 	}
@@ -924,28 +1047,46 @@ func fetchDvrefServers(network string, fallback []string) []string {
 		if devMode {
 			log.Printf("[dvref] JSON decode error: %v", err)
 		}
-		return fallback
+		return nil
 	}
 
 	seen := make(map[string]bool)
-	var names []string
+	var reflectors []dvrefReflector
 	for _, r := range envelope.Data.Reflectors {
-		if r.Name != "" && !seen[r.Name] {
-			names = append(names, r.Name)
-			seen[r.Name] = true
+		if r.Name == "" || seen[r.Name] {
+			continue
 		}
+		seen[r.Name] = true
+		port := r.Port
+		if port == 0 {
+			port = 42000
+		}
+		reflectors = append(reflectors, dvrefReflector{
+			Name:        r.Name,
+			Designator:  r.Designator,
+			Description: r.Description,
+			DNS:         r.DNS,
+			IPv4:        r.IPv4,
+			Port:        port,
+			Country:     r.Country,
+		})
 	}
-	if len(names) == 0 {
+
+	if len(reflectors) == 0 {
 		if devMode {
-			log.Printf("[dvref] response contained no names, using hardcoded fallback")
+			log.Printf("[dvref] response contained no reflectors")
 		}
-		return fallback
+		return nil
 	}
-	sort.Strings(names)
+
+	sort.Slice(reflectors, func(i, j int) bool {
+		return reflectors[i].Name < reflectors[j].Name
+	})
+
 	if devMode {
-		log.Printf("[dvref] loaded %d YSF reflectors from dvref.com", len(names))
+		log.Printf("[dvref] loaded %d YSF reflectors from dvref.com", len(reflectors))
 	}
-	return names
+	return reflectors
 }
 
 func fetchBrandmeisterServers() []string {
@@ -988,23 +1129,34 @@ func getServersForNetwork(network string) []string {
 		return servers
 	}
 
-	// Cache miss — fetch live with a 3s timeout, fall back to hardcoded
+	// Cache miss — fetch live with a 5s timeout, fall back to hardcoded
 	done := make(chan []string, 1)
 	go func() {
-		var live []string
 		switch network {
 		case "brandmeister":
-			live = fetchBrandmeisterServers()
+			live := fetchBrandmeisterServers()
+			setCachedServers(network, live)
+			done <- live
 		case "ysf":
-			live = fetchDvrefServers("ysf", hardcodedServers["ysf"])
+			if reflectors := fetchDvrefReflectors(); reflectors != nil {
+				setCachedReflectors("ysf", reflectors)
+				names := make([]string, len(reflectors))
+				for i, r := range reflectors {
+					names[i] = r.Name
+				}
+				done <- names
+			} else {
+				fallback := hardcodedServers["ysf"]
+				setCachedServers("ysf", fallback)
+				done <- fallback
+			}
 		case "fcs":
-			live = fetchDvrefServers("fcs", hardcodedServers["fcs"])
+			fallback := hardcodedServers["fcs"]
+			setCachedServers("fcs", fallback)
+			done <- fallback
 		default:
 			done <- hardcodedServers[network]
-			return
 		}
-		setCachedServers(network, live)
-		done <- live
 	}()
 
 	select {
@@ -1190,6 +1342,7 @@ func (s *hotspotServer) UpdateHotspot(_ context.Context, req *connect.Request[op
 
 		nested(cfg, "openrig.hotspot.dmr.enabled", hc.Dmr.Enabled)
 		nested(cfg, "openrig.hotspot.dmr.dmr_id", int(hc.Dmr.DmrId))
+		nested(cfg, "openrig.hotspot.dmr.dmr_id_suffix", int(hc.Dmr.DmrIdSuffix))
 		nested(cfg, "openrig.hotspot.dmr.colorcode", int(hc.Dmr.Colorcode))
 		nested(cfg, "openrig.hotspot.dmr.network", hc.Dmr.Network)
 		nested(cfg, "openrig.hotspot.dmr.server", hc.Dmr.Server)
@@ -1234,26 +1387,46 @@ func (s *hotspotServer) UpdateHotspot(_ context.Context, req *connect.Request[op
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write config"))
 	}
 
-	// Update MMDVM configs and restart affected services
+	// Update MMDVM config files, then start/stop services to match the new config.
 	go func() {
 		if !devMode {
 			exec.Command("/usr/local/lib/openrig/mmdvm-update.sh").Run()
 		}
-		if hc.Dmr != nil && hc.Dmr.Enabled {
-			doRestartService("dmr")
+
+		dmrEnabled := hc.Dmr != nil && hc.Dmr.Enabled
+		ysfEnabled := hc.Ysf != nil && hc.Ysf.Enabled
+		ysf2dmrEnabled := hc.CrossMode != nil && hc.CrossMode.Ysf2DmrEnabled
+		dmr2ysfEnabled := hc.CrossMode != nil && hc.CrossMode.Dmr2YsfEnabled
+
+		// MMDVMHost must run if any RF mode is active.
+		if dmrEnabled || ysfEnabled {
+			doRestartService("mmdvmhost")
+		} else {
+			doStopService("mmdvmhost")
+		}
+
+		if dmrEnabled {
 			doRestartService("dmrgateway")
+		} else {
+			doStopService("dmrgateway")
 		}
-		if hc.Ysf != nil && hc.Ysf.Enabled {
-			doRestartService("ysf")
+
+		if ysfEnabled {
 			doRestartService("ysfgateway")
+		} else {
+			doStopService("ysfgateway")
 		}
-		if hc.CrossMode != nil {
-			if hc.CrossMode.Ysf2DmrEnabled {
-				doRestartService("ysf2dmr")
-			}
-			if hc.CrossMode.Dmr2YsfEnabled {
-				doRestartService("dmr2ysf")
-			}
+
+		if ysf2dmrEnabled {
+			doRestartService("ysf2dmr")
+		} else {
+			doStopService("ysf2dmr")
+		}
+
+		if dmr2ysfEnabled {
+			doRestartService("dmr2ysf")
+		} else {
+			doStopService("dmr2ysf")
 		}
 	}()
 
@@ -1284,8 +1457,37 @@ func (s *hotspotServer) UpdateDmrId(_ context.Context, req *connect.Request[open
 }
 
 func (s *hotspotServer) GetServers(_ context.Context, req *connect.Request[openrigv1.GetServersRequest]) (*connect.Response[openrigv1.GetServersResponse], error) {
-	servers := getServersForNetwork(req.Msg.Network)
-	return connect.NewResponse(&openrigv1.GetServersResponse{Servers: servers}), nil
+	network := req.Msg.Network
+	servers := getServersForNetwork(network)
+
+	// For YSF, build display labels that include the designator when available.
+	var labels []string
+	if network == "ysf" {
+		srvCacheMu.Lock()
+		reflectors := srvRefCache["ysf"]
+		srvCacheMu.Unlock()
+
+		if len(reflectors) > 0 {
+			// Build a name→designator lookup.
+			designators := make(map[string]string, len(reflectors))
+			for _, r := range reflectors {
+				designators[r.Name] = r.Designator
+			}
+			labels = make([]string, len(servers))
+			for i, name := range servers {
+				if d := designators[name]; d != "" {
+					labels[i] = name + " (" + d + ")"
+				} else {
+					labels[i] = name
+				}
+			}
+		}
+	}
+
+	return connect.NewResponse(&openrigv1.GetServersResponse{
+		Servers: servers,
+		Labels:  labels,
+	}), nil
 }
 
 func (s *hotspotServer) StreamLastHeard(ctx context.Context, _ *connect.Request[openrigv1.Empty], stream *connect.ServerStream[openrigv1.LastHeardEntry]) error {
@@ -1508,6 +1710,7 @@ func main() {
 
 	if devMode {
 		srvDiskCache = "/tmp/openrig-server-cache.json"
+		ysfHostsPath = "/tmp/YSFHosts.txt"
 		configPath = "./openrig.json"
 		wpaConfPath = "./wpa_supplicant-dev.conf"
 		if _, err := os.Stat(configPath); os.IsNotExist(err) {
@@ -1520,9 +1723,10 @@ func main() {
 			log.Printf("[dev] Dev mode enabled — config: %s, addr: %s", configPath, listenAddr)
 	} else {
 		srvDiskCache = "/var/cache/openrig/server-cache.json"
+		ysfHostsPath = "/usr/local/etc/YSFHosts.txt"
 	}
 
-	loadDiskCache()
+	loadDiskCache() // also calls writeYsfHostsFile() if cached reflectors are available
 
 	mux := http.NewServeMux()
 

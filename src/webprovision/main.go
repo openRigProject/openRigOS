@@ -1256,6 +1256,13 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     padding:.6rem .75rem;color:#e2e8f0;font-size:.95rem;outline:none;transition:border-color .15s}
   input:focus,select:focus{border-color:#38bdf8}
   .hint{font-size:.75rem;color:#64748b;margin-top:.3rem}
+  .combo{position:relative}
+  .combo-input{width:100%;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:.6rem .75rem;color:#e2e8f0;font-size:.95rem;outline:none;transition:border-color .15s}
+  .combo-input:focus{border-color:#38bdf8}
+  .combo-dropdown{position:absolute;z-index:50;width:100%;max-height:180px;overflow-y:auto;background:#1e293b;border:1px solid #475569;border-radius:6px;margin-top:2px;display:none;box-shadow:0 4px 12px rgba(0,0,0,.4)}
+  .combo-dropdown.open{display:block}
+  .combo-option{padding:.45rem .75rem;font-size:.9rem;cursor:pointer;color:#e2e8f0}
+  .combo-option:hover,.combo-option.active{background:#0f172a;color:#38bdf8}
   .toggle-row{display:flex;justify-content:space-between;align-items:center;padding:.65rem 0;border-bottom:1px solid #1e293b}
   .toggle-row:last-child{border-bottom:none}
   .toggle-label{font-size:.9rem;color:#e2e8f0}
@@ -1372,6 +1379,13 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
       <div><div class="toggle-label">DMR Enabled</div><div class="toggle-sub">Digital Mobile Radio gateway</div></div>
       <label class="switch"><input type="checkbox" id="dmr-enabled"><span class="slider"></span></label>
     </div>
+    <label>DMR ID</label>
+    <div style="display:flex;gap:.5rem;align-items:center">
+      <input type="text" id="dmr-id" inputmode="numeric" pattern="[0-9]{7}" maxlength="7" placeholder="7-digit ID" style="flex:1" oninput="updateEffectiveDmrId()">
+      <span style="color:#64748b;white-space:nowrap;font-size:.9rem">Suffix</span>
+      <input type="number" id="dmr-id-suffix" min="0" max="99" value="0" style="width:4rem" oninput="updateEffectiveDmrId()">
+    </div>
+    <p class="hint" id="dmr-id-effective" style="margin-top:.25rem"></p>
     <label>Color Code (1-15)</label>
     <input type="number" id="dmr-colorcode" min="1" max="15" value="1">
     <label>Network</label>
@@ -1385,7 +1399,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
       <option value="custom">Custom</option>
     </select>
     <label>Server</label>
-    <select id="dmr-server"><option value="">Loading...</option></select>
+    <div class="combo"><input type="text" class="combo-input" id="dmr-server-input" placeholder="Loading..." autocomplete="off" spellcheck="false"><div class="combo-dropdown" id="dmr-server-dropdown"></div><input type="hidden" id="dmr-server"></div>
     <label>Password</label>
     <input type="password" id="dmr-password" placeholder="DMR network password">
     <div class="card-title" style="margin-top:1.25rem">Talkgroups</div>
@@ -1409,11 +1423,11 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     </select>
     <div id="ysf-reflector-group">
       <label>Reflector</label>
-      <select id="ysf-reflector"><option value="">Loading...</option></select>
+      <div class="combo"><input type="text" class="combo-input" id="ysf-reflector-input" placeholder="Loading..." autocomplete="off" spellcheck="false"><div class="combo-dropdown" id="ysf-reflector-dropdown"></div><input type="hidden" id="ysf-reflector"></div>
     </div>
     <div id="ysf-fcs-group" style="display:none">
       <label>FCS Room</label>
-      <select id="fcs-room"><option value="">Loading...</option></select>
+      <div class="combo"><input type="text" class="combo-input" id="fcs-room-input" placeholder="Loading..." autocomplete="off" spellcheck="false"><div class="combo-dropdown" id="fcs-room-dropdown"></div><input type="hidden" id="fcs-room"></div>
       <label>Module</label>
       <select id="fcs-module">
         <option value="A">A</option><option value="B">B</option><option value="C">C</option>
@@ -1445,12 +1459,6 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
       <input type="number" id="ysf2dmr-tg" placeholder="e.g. 31672" style="flex:1">
       <span id="ysf2dmrTGName" style="color:#6c757d;font-size:.85rem;white-space:nowrap"></span>
     </div>
-    <div class="toggle-row" style="margin-top:1rem">
-      <div><div class="toggle-label">DMR to YSF</div><div class="toggle-sub">Bridge DMR audio to a YSF room</div></div>
-      <label class="switch"><input type="checkbox" id="dmr2ysf-enabled"><span class="slider"></span></label>
-    </div>
-    <label>YSF Room</label>
-    <input type="text" id="dmr2ysf-room" placeholder="e.g. US-openRig">
   </div>
   <div class="btn-row">
     <button class="btn" onclick="saveHotspot()">Save Hotspot Config</button>
@@ -1485,10 +1493,6 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     <div class="svc-row">
       <span class="svc-name">YSF2DMR Bridge</span>
       <button class="btn btn-outline" onclick="restartSvc('ysf2dmr')">Restart</button>
-    </div>
-    <div class="svc-row">
-      <span class="svc-name">DMR2YSF Bridge</span>
-      <button class="btn btn-outline" onclick="restartSvc('dmr2ysf')">Restart</button>
     </div>
   </div>
 </div>
@@ -1580,26 +1584,94 @@ function renderStatus(d){
   document.getElementById('st-provisioned').textContent=d.provisioned?'Yes':'No';
   document.getElementById('status-badge').textContent=d.callsign?d.callsign+' \u00b7 '+d.deviceType:'Not provisioned';
 }
+var combos={};
+function makeCombo(id){
+  var allItems=[];  // stored values (e.g. "AMERICA")
+  var allLabels=[]; // display text (e.g. "AMERICA (00029)"); parallel to allItems
+  function labelFor(value){
+    var i=allItems.indexOf(value);
+    return(i>=0&&allLabels[i])?allLabels[i]:value;
+  }
+  function el(){return{inp:document.getElementById(id+'-input'),drop:document.getElementById(id+'-dropdown'),hidden:document.getElementById(id)};}
+  function renderList(q){
+    var e=el();if(!e.drop)return;
+    var lq=q?q.toLowerCase():'';
+    var filtered=allItems.reduce(function(acc,v,i){
+      var lbl=allLabels[i]||v;
+      if(!lq||lbl.toLowerCase().indexOf(lq)>=0)acc.push({value:v,label:lbl});
+      return acc;
+    },[]);
+    e.drop.innerHTML=filtered.map(function(item){
+      return'<div class="combo-option" data-value="'+esc(item.value)+'">'+esc(item.label)+'</div>';
+    }).join('');
+    e.drop.classList.toggle('open',filtered.length>0);
+  }
+  function select(value,close){
+    var e=el();
+    if(e.hidden)e.hidden.value=value;
+    if(e.inp)e.inp.value=labelFor(value);
+    if(close&&e.drop)e.drop.classList.remove('open');
+  }
+  var inpEl=document.getElementById(id+'-input');
+  var dropEl=document.getElementById(id+'-dropdown');
+  if(inpEl){
+    inpEl.addEventListener('focus',function(){renderList('');});
+    inpEl.addEventListener('input',function(){renderList(inpEl.value);});
+    inpEl.addEventListener('blur',function(){
+      setTimeout(function(){
+        var d=document.getElementById(id+'-dropdown');
+        if(d)d.classList.remove('open');
+        // Restore the label for the current stored value on blur.
+        var h=document.getElementById(id);
+        var i=document.getElementById(id+'-input');
+        if(h&&i)i.value=labelFor(h.value);
+      },150);
+    });
+  }
+  if(dropEl){
+    dropEl.addEventListener('mousedown',function(e){
+      e.preventDefault();
+      var opt=e.target.closest('.combo-option');
+      if(opt)select(opt.dataset.value,true);
+    });
+  }
+  combos[id]={populate:function(items,selected,labels){
+    allItems=items;
+    allLabels=labels||[];
+    var effective=(selected&&items.indexOf(selected)>=0)?selected:(items.length?items[0]:'');
+    select(effective,false);
+  }};
+}
 function loadDmrServerList(network,savedValue){
-  var s=document.getElementById('dmr-server');
-  s.innerHTML='<option value="">Loading...</option>';
+  var inp=document.getElementById('dmr-server-input');
+  inp.placeholder='Loading...';inp.value='';
   openrig.getServers(network).then(function(d){
     var servers=d.servers||[];
-    if(savedValue&&servers.indexOf(savedValue)<0)servers=[savedValue].concat(servers);
-    s.innerHTML=servers.map(function(sv){return'<option value="'+esc(sv)+'">'+esc(sv)+'</option>';}).join('');
-    s.value=savedValue||(servers.length>0?servers[0]:'');
-  }).catch(function(e){console.error('getServers('+network+') failed:',e);s.innerHTML='';});
+    combos['dmr-server'].populate(servers,savedValue);
+    inp.placeholder='Search servers...';
+  }).catch(function(e){console.error('getServers('+network+') failed:',e);inp.placeholder='Search servers...';});
+}
+function updateEffectiveDmrId(){
+  var base=document.getElementById('dmr-id').value.trim();
+  var suffix=parseInt(document.getElementById('dmr-id-suffix').value)||0;
+  var el=document.getElementById('dmr-id-effective');
+  if(!base){el.textContent='';return;}
+  if(suffix>0){
+    el.textContent='Effective hotspot ID: '+base+String(suffix).padStart(2,'0');
+  }else{
+    el.textContent='Effective hotspot ID: '+base;
+  }
 }
 function onDmrNetworkChange(){loadDmrServerList(document.getElementById('dmr-network').value,'');}
 function loadYsfList(network,inputId,savedValue){
-  var inp=document.getElementById(inputId);
-  inp.innerHTML='<option value="">Loading...</option>';
+  var inp=document.getElementById(inputId+'-input');
+  inp.placeholder='Loading...';inp.value='';
   openrig.getServers(network).then(function(d){
     var items=d.servers||[];
-    if(savedValue&&items.indexOf(savedValue)<0)items=[savedValue].concat(items);
-    inp.innerHTML=items.map(function(v){return'<option value="'+esc(v)+'">'+esc(v)+'</option>';}).join('');
-    inp.value=savedValue||(items.length>0?items[0]:'');
-  }).catch(function(e){console.error('getServers('+network+') failed:',e);inp.innerHTML='';});
+    var labels=d.labels||[];
+    combos[inputId].populate(items,savedValue,labels);
+    inp.placeholder='Search...';
+  }).catch(function(e){console.error('getServers('+network+') failed:',e);inp.placeholder='Search...';});
 }
 function onYsfNetworkChange(){
   var n=document.getElementById('ysf-network').value;
@@ -1646,6 +1718,9 @@ function loadHotspot(){
     document.getElementById('rf-frequency').value=d.rfFrequency||'';
     document.getElementById('tx-frequency').value=d.txFrequency||0;
     document.getElementById('dmr-enabled').checked=d.dmr.enabled;
+    document.getElementById('dmr-id').value=d.dmr.dmrId||'';
+    document.getElementById('dmr-id-suffix').value=d.dmr.dmrIdSuffix||0;
+    updateEffectiveDmrId();
     document.getElementById('dmr-colorcode').value=d.dmr.colorcode||1;
     document.getElementById('dmr-network').value=d.dmr.network||'brandmeister';
     loadDmrServerList(d.dmr.network||'brandmeister',d.dmr.server||'');
@@ -1666,8 +1741,6 @@ function loadHotspot(){
     document.getElementById('ysf-description').value=d.ysf.description||'';
     document.getElementById('ysf2dmr-enabled').checked=d.crossMode.ysf2dmrEnabled;
     document.getElementById('ysf2dmr-tg').value=d.crossMode.ysf2dmrTalkgroup||'';
-    document.getElementById('dmr2ysf-enabled').checked=d.crossMode.dmr2ysfEnabled;
-    document.getElementById('dmr2ysf-room').value=d.crossMode.dmr2ysfRoom||'';
   }).catch(function(e){console.error('loadHotspot failed:',e);});
 }
 function renderTalkgroups(){
@@ -1691,6 +1764,8 @@ function saveHotspot(){
     rfFrequency:parseFloat(document.getElementById('rf-frequency').value)||0,
     txFrequency:parseFloat(document.getElementById('tx-frequency').value)||0,
     dmr:{enabled:document.getElementById('dmr-enabled').checked,
+      dmrId:parseInt(document.getElementById('dmr-id').value)||0,
+      dmrIdSuffix:parseInt(document.getElementById('dmr-id-suffix').value)||0,
       colorcode:parseInt(document.getElementById('dmr-colorcode').value)||1,
       network:document.getElementById('dmr-network').value,
       server:document.getElementById('dmr-server').value,
@@ -1703,8 +1778,7 @@ function saveHotspot(){
       description:document.getElementById('ysf-description').value}})(),
     crossMode:{ysf2dmrEnabled:document.getElementById('ysf2dmr-enabled').checked,
       ysf2dmrTalkgroup:parseInt(document.getElementById('ysf2dmr-tg').value)||0,
-      dmr2ysfEnabled:document.getElementById('dmr2ysf-enabled').checked,
-      dmr2ysfRoom:document.getElementById('dmr2ysf-room').value}
+      dmr2ysfEnabled:false,dmr2ysfRoom:''}
   };
   openrig.updateHotspot(body).then(function(){toast('Hotspot config saved');}).catch(function(e){toast(e.message,true);});
 }
@@ -1755,6 +1829,9 @@ function saveDevice(){
 }
 function esc(s){if(!s)return'';var d=document.createElement('div');d.appendChild(document.createTextNode(s));return d.innerHTML;}
 function initPage(){
+  makeCombo('dmr-server');
+  makeCombo('ysf-reflector');
+  makeCombo('fcs-room');
   openrig.getStatus().then(renderStatus).catch(function(){});
   openrig.streamStatus(renderStatus);
   openrig.streamLastHeard(appendOrUpdateLastHeard);

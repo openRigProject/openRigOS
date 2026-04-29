@@ -35,6 +35,11 @@ MODEM_SPEED=$(jq -r '.openrig.hotspot.modem.speed // 115200' "$OPENRIG_JSON")
 
 # DMR ID: check operator-level first, fall back to hotspot-level
 DMR_ID=$(jq -r '.openrig.operator.dmr_id // .openrig.hotspot.dmr.dmr_id // 0' "$OPENRIG_JSON")
+# Optional 2-digit hotspot suffix (01–99) appended to form a 9-digit hotspot ID.
+DMR_ID_SUFFIX=$(jq -r '.openrig.hotspot.dmr.dmr_id_suffix // 0' "$OPENRIG_JSON")
+if [ "$DMR_ID_SUFFIX" -gt 0 ] 2>/dev/null; then
+    DMR_ID="${DMR_ID}$(printf '%02d' "$DMR_ID_SUFFIX")"
+fi
 BM_SERVER=$(jq -r '.openrig.hotspot.dmr.bm_server // "uk.brandmeister.network"' "$OPENRIG_JSON")
 BM_PASSWORD=$(jq -r '.openrig.hotspot.dmr.bm_password // ""' "$OPENRIG_JSON")
 YSF_REFLECTOR=$(jq -r '.openrig.hotspot.ysf.reflector // "AMERICA"' "$OPENRIG_JSON")
