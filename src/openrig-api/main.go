@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"connectrpc.com/grpcreflect"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
@@ -784,7 +785,7 @@ func setCachedServers(network string, servers []string) {
 }
 
 func fetchHostsFile(url string, fallback []string) []string {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 2500 * time.Millisecond}
 	resp, err := client.Get(url)
 	if err != nil || resp.StatusCode != 200 {
 		return fallback
@@ -814,7 +815,7 @@ func fetchHostsFile(url string, fallback []string) []string {
 
 func fetchBrandmeisterServers() []string {
 	fallback := hardcodedServers["brandmeister"]
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 2500 * time.Millisecond}
 	resp, err := client.Get("https://api.brandmeister.network/v2/server")
 	if err != nil || resp.StatusCode != 200 {
 		return fallback
@@ -847,16 +848,13 @@ func fetchBrandmeisterServers() []string {
 }
 
 func getServersForNetwork(network string) []string {
+	// Cache hit — return immediately (cache TTL is 1 hour)
 	if servers, ok := getCachedServers(network); ok {
 		return servers
 	}
 
-	immediate := hardcodedServers[network]
-	if immediate == nil {
-		immediate = []string{}
-	}
-
-	// Background fetch to warm cache
+	// Cache miss — fetch live with a 3s timeout, fall back to hardcoded
+	done := make(chan []string, 1)
 	go func() {
 		var live []string
 		switch network {
@@ -867,12 +865,23 @@ func getServersForNetwork(network string) []string {
 		case "fcs":
 			live = fetchHostsFile("https://www.pistar.uk/downloads/FCSHosts.txt", hardcodedServers["fcs"])
 		default:
+			done <- hardcodedServers[network]
 			return
 		}
 		setCachedServers(network, live)
+		done <- live
 	}()
 
-	return immediate
+	select {
+	case servers := <-done:
+		return servers
+	case <-time.After(3 * time.Second):
+		fallback := hardcodedServers[network]
+		if fallback == nil {
+			return []string{}
+		}
+		return fallback
+	}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1389,6 +1398,16 @@ func main() {
 
 	path, handler = openrigv1connect.NewRigServiceHandler(&rigServer{})
 	mux.Handle(path, handler)
+
+	// gRPC server reflection — enables grpcurl and buf curl schema discovery
+	reflector := grpcreflect.NewStaticReflector(
+		"openrig.v1.DeviceService",
+		"openrig.v1.HotspotService",
+		"openrig.v1.WifiService",
+		"openrig.v1.RigService",
+	)
+	mux.Handle(grpcreflect.NewHandlerV1(reflector))
+	mux.Handle(grpcreflect.NewHandlerV1Alpha(reflector))
 
 	log.Printf("openRig API listening on %s", listenAddr)
 	if err := http.ListenAndServe(listenAddr, h2c.NewHandler(mux, &http2.Server{})); err != nil {

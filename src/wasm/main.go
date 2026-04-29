@@ -122,9 +122,10 @@ func jsGetConfig(_ js.Value, _ []js.Value) any {
 }
 
 func jsUpdateConfig(_ js.Value, args []js.Value) any {
+	raw := jsArg(args[0]) // extract synchronously before goroutine
 	return jsPromise(func() ([]byte, error) {
 		var cfg openrigv1.DeviceConfig
-		if err := protojson.Unmarshal([]byte(jsArg(args[0])), &cfg); err != nil {
+		if err := protojson.Unmarshal([]byte(raw), &cfg); err != nil {
 			return nil, err
 		}
 		resp, err := deviceClient.UpdateConfig(context.Background(),
@@ -137,8 +138,8 @@ func jsUpdateConfig(_ js.Value, args []js.Value) any {
 }
 
 func jsRestartService(_ js.Value, args []js.Value) any {
+	name := args[0].String() // extract synchronously before goroutine
 	return jsPromise(func() ([]byte, error) {
-		name := args[0].String()
 		resp, err := deviceClient.RestartService(context.Background(),
 			connect.NewRequest(&openrigv1.RestartServiceRequest{Service: name}))
 		if err != nil {
@@ -183,9 +184,10 @@ func jsGetHotspot(_ js.Value, _ []js.Value) any {
 }
 
 func jsUpdateHotspot(_ js.Value, args []js.Value) any {
+	raw := jsArg(args[0]) // extract synchronously before goroutine
 	return jsPromise(func() ([]byte, error) {
 		var cfg openrigv1.HotspotConfig
-		if err := protojson.Unmarshal([]byte(jsArg(args[0])), &cfg); err != nil {
+		if err := protojson.Unmarshal([]byte(raw), &cfg); err != nil {
 			return nil, err
 		}
 		resp, err := hotspotClient.UpdateHotspot(context.Background(),
@@ -198,8 +200,8 @@ func jsUpdateHotspot(_ js.Value, args []js.Value) any {
 }
 
 func jsUpdateDmrId(_ js.Value, args []js.Value) any {
+	id := int32(args[0].Int()) // extract synchronously before goroutine
 	return jsPromise(func() ([]byte, error) {
-		id := int32(args[0].Int())
 		resp, err := hotspotClient.UpdateDmrId(context.Background(),
 			connect.NewRequest(&openrigv1.UpdateDmrIdRequest{DmrId: id}))
 		if err != nil {
@@ -210,8 +212,8 @@ func jsUpdateDmrId(_ js.Value, args []js.Value) any {
 }
 
 func jsGetServers(_ js.Value, args []js.Value) any {
+	network := args[0].String() // extract synchronously before goroutine
 	return jsPromise(func() ([]byte, error) {
-		network := args[0].String()
 		resp, err := hotspotClient.GetServers(context.Background(),
 			connect.NewRequest(&openrigv1.GetServersRequest{Network: network}))
 		if err != nil {
@@ -254,9 +256,10 @@ func jsGetWifi(_ js.Value, _ []js.Value) any {
 }
 
 func jsUpdateWifi(_ js.Value, args []js.Value) any {
+	raw := jsArg(args[0]) // extract synchronously before goroutine
 	return jsPromise(func() ([]byte, error) {
 		var cfg openrigv1.WifiConfig
-		if err := protojson.Unmarshal([]byte(jsArg(args[0])), &cfg); err != nil {
+		if err := protojson.Unmarshal([]byte(raw), &cfg); err != nil {
 			return nil, err
 		}
 		resp, err := wifiClient.UpdateWifi(context.Background(),
@@ -301,9 +304,10 @@ func jsGetRigs(_ js.Value, _ []js.Value) any {
 }
 
 func jsUpdateRigs(_ js.Value, args []js.Value) any {
+	raw := jsArg(args[0]) // extract synchronously before goroutine
 	return jsPromise(func() ([]byte, error) {
 		var req openrigv1.UpdateRigsRequest
-		if err := protojson.Unmarshal([]byte(jsArg(args[0])), &req); err != nil {
+		if err := protojson.Unmarshal([]byte(raw), &req); err != nil {
 			return nil, err
 		}
 		resp, err := rigClient.UpdateRigs(context.Background(), connect.NewRequest(&req))

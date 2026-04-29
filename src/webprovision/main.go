@@ -1663,10 +1663,13 @@ function loadHotspot(){
     updateTGName();
     document.getElementById('ysf-enabled').checked=d.ysf.enabled;
     document.getElementById('ysf-network').value=d.ysf.network||'ysf';
-    if(d.ysf.network==='fcs'){document.getElementById('fcs-room').value=d.ysf.reflector||'';document.getElementById('fcs-module').value=d.ysf.module||'A';loadYsfList('fcs','fcs-room','fcs-room-list',true);}
-    else if(d.ysf.network==='custom'){document.getElementById('ysf-custom-server').value=d.ysf.reflector||'';}
+    var yn=d.ysf.network||'ysf';
+    document.getElementById('ysf-reflector-group').style.display=yn==='ysf'?'':'none';
+    document.getElementById('ysf-fcs-group').style.display=yn==='fcs'?'':'none';
+    document.getElementById('ysf-custom-group').style.display=yn==='custom'?'':'none';
+    if(yn==='fcs'){document.getElementById('fcs-room').value=d.ysf.reflector||'';document.getElementById('fcs-module').value=d.ysf.module||'A';loadYsfList('fcs','fcs-room','fcs-room-list',true);}
+    else if(yn==='custom'){document.getElementById('ysf-custom-server').value=d.ysf.reflector||'';}
     else{document.getElementById('ysf-reflector').value=d.ysf.reflector||'';loadYsfList('ysf','ysf-reflector','ysf-reflector-list',true);}
-    onYsfNetworkChange();
     document.getElementById('ysf-description').value=d.ysf.description||'';
     document.getElementById('ysf2dmr-enabled').checked=d.crossMode.ysf2dmrEnabled;
     document.getElementById('ysf2dmr-tg').value=d.crossMode.ysf2dmrTalkgroup||'';
