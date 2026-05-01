@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
     binfmt-support \
     squashfs-tools \
     xorriso \
+    mtools \
     grub-efi-amd64-bin \
     grub-pc-bin \
     dosfstools \
