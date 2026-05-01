@@ -45,6 +45,9 @@ const (
 	// HotspotServiceGetServersProcedure is the fully-qualified name of the HotspotService's GetServers
 	// RPC.
 	HotspotServiceGetServersProcedure = "/openrig.v1.HotspotService/GetServers"
+	// HotspotServiceLookupCallsignProcedure is the fully-qualified name of the HotspotService's
+	// LookupCallsign RPC.
+	HotspotServiceLookupCallsignProcedure = "/openrig.v1.HotspotService/LookupCallsign"
 	// HotspotServiceStreamLastHeardProcedure is the fully-qualified name of the HotspotService's
 	// StreamLastHeard RPC.
 	HotspotServiceStreamLastHeardProcedure = "/openrig.v1.HotspotService/StreamLastHeard"
@@ -56,8 +59,9 @@ type HotspotServiceClient interface {
 	UpdateHotspot(context.Context, *connect.Request[v1.UpdateHotspotRequest]) (*connect.Response[v1.HotspotConfig], error)
 	UpdateDmrId(context.Context, *connect.Request[v1.UpdateDmrIdRequest]) (*connect.Response[v1.UpdateDmrIdResponse], error)
 	// GetServers returns the server list for a given network.
-	// Returns hardcoded fallback immediately; live fetch warms the cache.
 	GetServers(context.Context, *connect.Request[v1.GetServersRequest]) (*connect.Response[v1.GetServersResponse], error)
+	// LookupCallsign queries QRZ.com for callsign details.
+	LookupCallsign(context.Context, *connect.Request[v1.LookupCallsignRequest]) (*connect.Response[v1.CallsignInfo], error)
 	// StreamLastHeard streams new last-heard entries as they appear.
 	StreamLastHeard(context.Context, *connect.Request[v1.Empty]) (*connect.ServerStreamForClient[v1.LastHeardEntry], error)
 }
@@ -97,6 +101,12 @@ func NewHotspotServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(hotspotServiceMethods.ByName("GetServers")),
 			connect.WithClientOptions(opts...),
 		),
+		lookupCallsign: connect.NewClient[v1.LookupCallsignRequest, v1.CallsignInfo](
+			httpClient,
+			baseURL+HotspotServiceLookupCallsignProcedure,
+			connect.WithSchema(hotspotServiceMethods.ByName("LookupCallsign")),
+			connect.WithClientOptions(opts...),
+		),
 		streamLastHeard: connect.NewClient[v1.Empty, v1.LastHeardEntry](
 			httpClient,
 			baseURL+HotspotServiceStreamLastHeardProcedure,
@@ -112,6 +122,7 @@ type hotspotServiceClient struct {
 	updateHotspot   *connect.Client[v1.UpdateHotspotRequest, v1.HotspotConfig]
 	updateDmrId     *connect.Client[v1.UpdateDmrIdRequest, v1.UpdateDmrIdResponse]
 	getServers      *connect.Client[v1.GetServersRequest, v1.GetServersResponse]
+	lookupCallsign  *connect.Client[v1.LookupCallsignRequest, v1.CallsignInfo]
 	streamLastHeard *connect.Client[v1.Empty, v1.LastHeardEntry]
 }
 
@@ -135,6 +146,11 @@ func (c *hotspotServiceClient) GetServers(ctx context.Context, req *connect.Requ
 	return c.getServers.CallUnary(ctx, req)
 }
 
+// LookupCallsign calls openrig.v1.HotspotService.LookupCallsign.
+func (c *hotspotServiceClient) LookupCallsign(ctx context.Context, req *connect.Request[v1.LookupCallsignRequest]) (*connect.Response[v1.CallsignInfo], error) {
+	return c.lookupCallsign.CallUnary(ctx, req)
+}
+
 // StreamLastHeard calls openrig.v1.HotspotService.StreamLastHeard.
 func (c *hotspotServiceClient) StreamLastHeard(ctx context.Context, req *connect.Request[v1.Empty]) (*connect.ServerStreamForClient[v1.LastHeardEntry], error) {
 	return c.streamLastHeard.CallServerStream(ctx, req)
@@ -146,8 +162,9 @@ type HotspotServiceHandler interface {
 	UpdateHotspot(context.Context, *connect.Request[v1.UpdateHotspotRequest]) (*connect.Response[v1.HotspotConfig], error)
 	UpdateDmrId(context.Context, *connect.Request[v1.UpdateDmrIdRequest]) (*connect.Response[v1.UpdateDmrIdResponse], error)
 	// GetServers returns the server list for a given network.
-	// Returns hardcoded fallback immediately; live fetch warms the cache.
 	GetServers(context.Context, *connect.Request[v1.GetServersRequest]) (*connect.Response[v1.GetServersResponse], error)
+	// LookupCallsign queries QRZ.com for callsign details.
+	LookupCallsign(context.Context, *connect.Request[v1.LookupCallsignRequest]) (*connect.Response[v1.CallsignInfo], error)
 	// StreamLastHeard streams new last-heard entries as they appear.
 	StreamLastHeard(context.Context, *connect.Request[v1.Empty], *connect.ServerStream[v1.LastHeardEntry]) error
 }
@@ -183,6 +200,12 @@ func NewHotspotServiceHandler(svc HotspotServiceHandler, opts ...connect.Handler
 		connect.WithSchema(hotspotServiceMethods.ByName("GetServers")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hotspotServiceLookupCallsignHandler := connect.NewUnaryHandler(
+		HotspotServiceLookupCallsignProcedure,
+		svc.LookupCallsign,
+		connect.WithSchema(hotspotServiceMethods.ByName("LookupCallsign")),
+		connect.WithHandlerOptions(opts...),
+	)
 	hotspotServiceStreamLastHeardHandler := connect.NewServerStreamHandler(
 		HotspotServiceStreamLastHeardProcedure,
 		svc.StreamLastHeard,
@@ -199,6 +222,8 @@ func NewHotspotServiceHandler(svc HotspotServiceHandler, opts ...connect.Handler
 			hotspotServiceUpdateDmrIdHandler.ServeHTTP(w, r)
 		case HotspotServiceGetServersProcedure:
 			hotspotServiceGetServersHandler.ServeHTTP(w, r)
+		case HotspotServiceLookupCallsignProcedure:
+			hotspotServiceLookupCallsignHandler.ServeHTTP(w, r)
 		case HotspotServiceStreamLastHeardProcedure:
 			hotspotServiceStreamLastHeardHandler.ServeHTTP(w, r)
 		default:
@@ -224,6 +249,10 @@ func (UnimplementedHotspotServiceHandler) UpdateDmrId(context.Context, *connect.
 
 func (UnimplementedHotspotServiceHandler) GetServers(context.Context, *connect.Request[v1.GetServersRequest]) (*connect.Response[v1.GetServersResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openrig.v1.HotspotService.GetServers is not implemented"))
+}
+
+func (UnimplementedHotspotServiceHandler) LookupCallsign(context.Context, *connect.Request[v1.LookupCallsignRequest]) (*connect.Response[v1.CallsignInfo], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openrig.v1.HotspotService.LookupCallsign is not implemented"))
 }
 
 func (UnimplementedHotspotServiceHandler) StreamLastHeard(context.Context, *connect.Request[v1.Empty], *connect.ServerStream[v1.LastHeardEntry]) error {

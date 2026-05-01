@@ -14,25 +14,24 @@ git clone --depth=1 https://github.com/g4klx/MMDVMHost.git "${MMDVM_SRC}"
 
 cd "${MMDVM_SRC}"
 
-# Cross-compile for the target architecture
+# Select cross-compiler for target architecture
 case "${DEBIAN_ARCH}" in
     arm64)
-        export CXX=aarch64-linux-gnu-g++
-        export CC=aarch64-linux-gnu-gcc
+        TARGET_CXX=aarch64-linux-gnu-g++
+        TARGET_CC=aarch64-linux-gnu-gcc
         ;;
     armhf)
-        export CXX=arm-linux-gnueabihf-g++
-        export CC=arm-linux-gnueabihf-gcc
+        TARGET_CXX=arm-linux-gnueabihf-g++
+        TARGET_CC=arm-linux-gnueabihf-gcc
         ;;
-    amd64)
-        # Native build — no cross-compiler needed
-        ;;
-    *)
-        echo "[00-mmdvmhost] WARNING: unknown arch ${DEBIAN_ARCH}, attempting native build"
+    amd64|*)
+        TARGET_CXX=g++
+        TARGET_CC=gcc
         ;;
 esac
 
-make -j"$(nproc)"
+echo "[00-mmdvmhost] Using CXX=${TARGET_CXX}"
+make CXX="${TARGET_CXX}" CC="${TARGET_CC}" -j"$(nproc)"
 
 mkdir -p "${STAGING_DIR}"
 cp MMDVMHost "${STAGING_DIR}/MMDVMHost"

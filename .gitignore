@@ -1,0 +1,6 @@
+output/
+src/openrig-api/openrig-api
+src/webprovision/webprovision
+src/openrig-api/openrig.json
+src/openrig.json
+.DS_Store

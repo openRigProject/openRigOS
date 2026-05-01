@@ -5,3 +5,7 @@ Name=usb0
 # Static IP on USB gadget interface so your Mac can find it
 # consistently without DHCP on the host side.
 Address=10.55.0.1/24
+
+[Link]
+# USB gadget has no carrier when unplugged — don't block network-online.target
+RequiredForOnline=no

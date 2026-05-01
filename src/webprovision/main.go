@@ -1222,6 +1222,45 @@ func handleAPIProxy(w http.ResponseWriter, r *http.Request) {
 	apiProxy.ServeHTTP(w, r)
 }
 
+// handleGatewayCmd publishes a remote-control command to a gateway via MQTT.
+// POST /gateway-cmd  {"gateway":"ysf"|"dmr", "command":"LinkYSF US-KCWIDE"|"UnLink"|"enable net1"|"disable net1"}
+func handleGatewayCmd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Gateway string `json:"gateway"`
+		Command string `json:"command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	var topic string
+	switch req.Gateway {
+	case "ysf":
+		topic = "ysf-gateway/command"
+	case "dmr":
+		topic = "dmr-gateway/command"
+	default:
+		http.Error(w, "invalid gateway", http.StatusBadRequest)
+		return
+	}
+	// Basic sanity check — no newlines, reasonable length
+	cmd := req.Command
+	if cmd == "" || len(cmd) > 200 || strings.ContainsAny(cmd, "\n\r") {
+		http.Error(w, "invalid command", http.StatusBadRequest)
+		return
+	}
+	if err := exec.Command("mosquitto_pub", "-h", "localhost", "-t", topic, "-m", cmd).Run(); err != nil {
+		http.Error(w, "publish failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
 // uiTmpl is the full management SPA, served at /hotspot.
 // JavaScript uses relative /api/* paths which are proxied to openrig-api.
 var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
@@ -1236,6 +1275,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
   .header{background:#1e293b;border-bottom:1px solid #334155;padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between}
   .logo{font-size:1.2rem;font-weight:700;color:#38bdf8}
   .status-badge{font-size:.75rem;padding:.25rem .6rem;border-radius:999px;background:#065f46;color:#6ee7b7}
+  #conn-warn{display:none;background:#7f1d1d;color:#fca5a5;text-align:center;padding:.5rem 1rem;font-size:.85rem;border-bottom:1px solid #ef4444}
   .tabs{display:flex;background:#1e293b;border-bottom:1px solid #334155;padding:0 1rem;gap:0}
   .tab{padding:.75rem 1.25rem;font-size:.875rem;color:#64748b;cursor:pointer;border-bottom:2px solid transparent;
     transition:color .15s,border-color .15s;background:none;border-top:none;border-left:none;border-right:none}
@@ -1294,6 +1334,12 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     color:#64748b;padding:.5rem;border-bottom:1px solid #334155}
   .clients-table td{padding:.5rem;font-size:.875rem;border-bottom:1px solid #1e293b}
   .empty{text-align:center;color:#475569;padding:2rem;font-size:.9rem}
+  .lm-row{display:flex;align-items:center;gap:.75rem}
+  .lm-row .combo{flex:1}
+  .lm-label{font-size:.85rem;color:#94a3b8;white-space:nowrap}
+  .btn-sm{padding:.45rem .9rem;font-size:.82rem}
+  .btn-unlink{background:transparent;color:#f87171;border:1px solid #7f1d1d;border-radius:6px;padding:.45rem .9rem;font-size:.82rem;cursor:pointer;transition:background .15s}
+  .btn-unlink:hover{background:#7f1d1d}
   .net-block{border:1px solid #334155;border-radius:8px;padding:1rem;margin-top:.75rem}
   .net-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem}
   .net-label{font-size:.8rem;font-weight:600;color:#94a3b8}
@@ -1308,9 +1354,29 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
   .svc-row{display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid #1e293b}
   .svc-row:last-child{border-bottom:none}
   .svc-name{font-size:.9rem;color:#e2e8f0}
+  #heard-map{height:320px;border-radius:8px;margin-top:1rem;background:#1e293b}
+  .hs-hdr{background:#7c2d12;color:#fcd34d;font-size:.68rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;text-align:center;padding:.28rem .5rem;border-radius:4px;margin-bottom:2px}
+  .hs-modes{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin-bottom:3px}
+  .hs-mode{background:#1e293b;color:#475569;text-align:center;padding:.3rem .4rem;font-size:.78rem;font-weight:600;border-radius:3px}
+  .hs-mode.on{background:#15803d;color:#bbf7d0}
+  .hs-kv{display:flex;border-bottom:1px solid #0f172a;min-height:1.75rem}
+  .hs-kv:last-child{border-bottom:none}
+  .hs-k{background:#1e293b;color:#94a3b8;font-size:.7rem;font-weight:700;padding:.3rem .4rem;min-width:2.8rem;text-align:center;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .hs-v{color:#e2e8f0;font-size:.78rem;padding:.3rem .5rem;flex:1;display:flex;align-items:center}
+  .hs-full{background:#1e293b;border-radius:3px;color:#e2e8f0;font-size:.78rem;text-align:center;padding:.3rem .5rem;margin-top:2px}
+  .hs-full.linked{background:#14532d;color:#86efac}
+  .hs-full.linking{background:#713f12;color:#fde68a}
+  .hs-full.unlinked{background:#450a0a;color:#fca5a5}
+  .leaflet-popup-content-wrapper{background:#1e293b;color:#e2e8f0;border:1px solid #334155}
+  .leaflet-popup-tip{background:#1e293b}
+  .map-call-link{color:#38bdf8;font-weight:700;cursor:pointer;text-decoration:none}
+  .map-call-link:hover{text-decoration:underline}
 </style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
+<div id="conn-warn">&#9888; Connection lost — retrying... (<span id="conn-warn-count">0</span> failed attempts)</div>
 <div class="header">
   <div class="logo">openRig</div>
   <div class="status-badge" id="status-badge">Loading...</div>
@@ -1325,9 +1391,10 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
 
 <!-- Status Panel -->
 <div class="panel active" id="panel-status" style="width:100vw;position:relative;left:50%;transform:translateX(-50%);padding:1.5rem">
-  <div style="display:grid;grid-template-columns:260px 1fr 260px;gap:1.25rem;align-items:start">
-    <!-- Left: Device Info -->
-    <div class="card" style="margin-bottom:0">
+  <div style="display:grid;grid-template-columns:260px 1fr 520px;gap:1.25rem;align-items:start">
+    <!-- Left: Device Info + Hotspot Status -->
+    <div style="position:sticky;top:1.5rem">
+    <div class="card" style="margin-bottom:1.25rem">
       <div class="card-title">Device Info</div>
       <div class="stat-grid" id="status-grid">
         <div class="stat"><div class="stat-label">Callsign</div><div class="stat-value" id="st-callsign">--</div></div>
@@ -1338,17 +1405,64 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
         <div class="stat"><div class="stat-label">Provisioned</div><div class="stat-value" id="st-provisioned">--</div></div>
       </div>
     </div>
-    <!-- Center: Last Heard -->
-    <div class="card" style="margin-bottom:0">
-      <div class="card-title">Last Heard</div>
-      <table class="clients-table" id="lastHeardTable" style="display:none">
-        <thead><tr><th>Callsign</th><th>Mode</th><th>Info</th><th>Duration</th><th>Time</th></tr></thead>
-        <tbody id="lastHeardBody"></tbody>
-      </table>
-      <p id="lastHeardEmpty" class="empty" style="text-align:center;padding:.75rem 0">No recent activity</p>
+      <div class="card" id="hs-card" style="margin-bottom:0;display:none">
+        <div class="card-title">Hotspot Status</div>
+        <div class="hs-hdr">Modes Enabled</div>
+        <div class="hs-modes">
+          <div class="hs-mode" id="hs-dmr">DMR</div>
+          <div class="hs-mode" id="hs-ysf">YSF</div>
+          <div class="hs-mode" id="hs-ysf2dmr">YSF&#8594;DMR</div>
+          <div class="hs-mode" id="hs-dmr2ysf">DMR&#8594;YSF</div>
+        </div>
+        <div class="hs-hdr">Radio Info</div>
+        <div class="hs-kv"><div class="hs-k">Freq</div><div class="hs-v" id="hs-freq">--</div></div>
+        <div class="hs-kv" id="hs-cc-row"><div class="hs-k">CC</div><div class="hs-v" id="hs-cc">--</div></div>
+        <div class="hs-kv" id="hs-id-row"><div class="hs-k">ID</div><div class="hs-v" id="hs-id">--</div></div>
+        <div class="hs-hdr" style="margin-top:.25rem" id="hs-net-hdr">Network</div>
+        <div class="hs-full" id="hs-net">--</div>
+      </div>
     </div>
-    <!-- Right: reserved -->
-    <div id="status-right-col"></div>
+    <!-- Center: Link Manager + Last Heard -->
+    <div>
+      <!-- Link Manager — visible only when YSF/DMR enabled -->
+      <div id="lm-container" style="display:none">
+        <div id="lm-ysf-panel" style="display:none">
+          <div class="card" style="margin-bottom:.75rem;padding:1rem 1.25rem">
+            <div class="card-title" style="margin-bottom:.75rem">YSF Reflector Manager</div>
+            <div class="lm-row">
+              <span class="lm-label">Reflector</span>
+              <div class="combo"><input type="text" class="combo-input" id="lm-ysf-ref-input" placeholder="Search reflectors..." autocomplete="off" spellcheck="false"><div class="combo-dropdown" id="lm-ysf-ref-dropdown"></div><input type="hidden" id="lm-ysf-ref"></div>
+              <button class="btn btn-sm" onclick="lmRequestChange('ysf','link')">Link</button>
+              <button class="btn-unlink" onclick="lmRequestChange('ysf','unlink')">Unlink</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:0">
+        <div class="card-title">Last Heard</div>
+        <table class="clients-table" id="lastHeardTable" style="display:none">
+          <thead><tr><th>Callsign</th><th>Mode</th><th>Info</th><th>Duration</th><th>BER</th><th>Time</th></tr></thead>
+          <tbody id="lastHeardBody"></tbody>
+        </table>
+        <p id="lastHeardEmpty" class="empty" style="text-align:center;padding:.75rem 0">No recent activity</p>
+      </div>
+    </div>
+    <!-- Right: Map -->
+    <div id="status-right-col">
+      <div class="card" style="margin-bottom:0">
+        <div class="card-title">Last Heard — Map</div>
+        <div id="heard-map"></div>
+        <div id="heard-detail" style="display:none;margin-top:.75rem;padding:.75rem;background:#0f172a;border-radius:6px;display:flex;gap:1rem;align-items:flex-start">
+          <img id="hd-img" src="" alt="" style="width:72px;height:72px;border-radius:6px;object-fit:cover;display:none">
+          <div>
+            <div style="font-size:1.1rem;font-weight:700"><a id="hd-call" href="#" target="_blank" style="color:#38bdf8;text-decoration:none"></a> <span id="hd-name" style="color:#94a3b8;font-weight:400;font-size:.95rem"></span></div>
+            <div id="hd-loc" style="color:#64748b;font-size:.85rem;margin-top:.2rem"></div>
+            <div id="hd-grid" style="color:#64748b;font-size:.85rem"></div>
+            <div id="hd-class" style="color:#64748b;font-size:.85rem"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1447,6 +1561,10 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     </div>
     <label>Description</label>
     <input type="text" id="ysf-description" placeholder="Station description">
+    <div class="toggle-row" style="margin-top:.75rem">
+      <div><div class="toggle-label">WiresX Passthrough</div><div class="toggle-sub">Forward WiresX room commands to the reflector instead of handling locally</div></div>
+      <label class="switch"><input type="checkbox" id="ysf-wiresx-passthrough"><span class="slider"></span></label>
+    </div>
   </div>
   <div class="card">
     <div class="card-title">Cross-Mode Bridge</div>
@@ -1511,6 +1629,13 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     <label>Grid Square</label>
     <input type="text" id="dev-grid" style="text-transform:uppercase">
     <p class="hint">Maidenhead locator for distance and bearing calculations.</p>
+    <label>QRZ Username</label>
+    <input type="text" id="dev-qrz-user" autocomplete="username">
+    <label>QRZ Password</label>
+    <input type="password" id="dev-qrz-pass" autocomplete="current-password">
+    <p class="hint">Used for callsign lookups on the Status map. Requires a QRZ XML subscription.</p>
+    <button class="btn" style="margin-top:.25rem" onclick="testQrzCreds()">Test QRZ Credentials</button>
+    <p id="qrz-test-result" style="margin-top:.5rem;font-size:.85rem;display:none"></p>
     <label>Timezone</label>
     <select id="dev-timezone">
       <option value="UTC">UTC</option>
@@ -1615,7 +1740,7 @@ function makeCombo(id){
   var inpEl=document.getElementById(id+'-input');
   var dropEl=document.getElementById(id+'-dropdown');
   if(inpEl){
-    inpEl.addEventListener('focus',function(){renderList('');});
+    inpEl.addEventListener('focus',function(){inpEl.value='';renderList('');});
     inpEl.addEventListener('input',function(){renderList(inpEl.value);});
     inpEl.addEventListener('blur',function(){
       setTimeout(function(){
@@ -1644,7 +1769,9 @@ function makeCombo(id){
 }
 function loadDmrServerList(network,savedValue){
   var inp=document.getElementById('dmr-server-input');
+  var hid=document.getElementById('dmr-server');
   inp.placeholder='Loading...';inp.value='';
+  if(hid)hid.value='';
   openrig.getServers(network).then(function(d){
     var servers=d.servers||[];
     combos['dmr-server'].populate(servers,savedValue);
@@ -1682,23 +1809,130 @@ function onYsfNetworkChange(){
   else if(n==='fcs')loadYsfList('fcs','fcs-room','');
 }
 function timeAgo(ts){var d=Math.floor((Date.now()-new Date(ts).getTime())/1000);if(d<60)return d+'s ago';if(d<3600)return Math.floor(d/60)+'m ago';if(d<86400)return Math.floor(d/3600)+'h ago';return Math.floor(d/86400)+'d ago';}
+function baseCall(cs){if(!cs)return cs;if(cs.indexOf('/')>=0)cs=cs.split('/').reduce(function(a,b){return a.length>=b.length?a:b;});var d=cs.indexOf('-');return d>=0?cs.slice(0,d):cs;}
 var lastHeardEntries=[];
+var heardMap=null;
+var heardMarker=null;      // single pin — always the latest (or pinned) callsign
+var heardCallsignInfo={};  // call -> QRZ info
+var pinnedCallsign=null;   // null = auto-follow latest
+function initHeardMap(){
+  if(heardMap)return;
+  heardMap=L.map('heard-map',{center:[20,0],zoom:4});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap contributors',maxZoom:18}).addTo(heardMap);
+  // clicking the map background unpins
+  heardMap.on('click',function(){pinnedCallsign=null;});
+}
+function updateMapPin(info,fly){
+  if(!heardMap||!info||!info.lat||!info.lon)return;
+  var call=info.call;
+  var popup='<a class="map-call-link" href="https://www.qrz.com/db/'+encodeURIComponent(call)+'" target="_blank">'+esc(call)+'</a>'
+    +(info.firstName||info.lastName?' <span style="color:#94a3b8">'+esc((info.firstName||'')+' '+(info.lastName||'')).trim()+'</span>':'')
+    +(info.city||info.state||info.country?'<br><span style="color:#64748b;font-size:.85rem">'+esc([info.city,info.state,info.country].filter(Boolean).join(', '))+'</span>':'')
+    +(info.grid?'<br><span style="color:#64748b;font-size:.85rem">'+esc(info.grid)+'</span>':'');
+  if(heardMarker){
+    heardMarker.setLatLng([info.lat,info.lon]).setPopupContent(popup);
+  } else {
+    heardMarker=L.marker([info.lat,info.lon]).addTo(heardMap).bindPopup(popup);
+    heardMarker.on('click',function(ev){
+      L.DomEvent.stopPropagation(ev);
+      pinnedCallsign=call;
+      showHeardDetail(heardCallsignInfo[call]);
+      heardMap.flyTo([info.lat,info.lon],6,{duration:1.5});
+    });
+  }
+  if(fly)heardMap.flyTo([info.lat,info.lon],6,{duration:1.5});
+}
+function showHeardDetail(info){
+  var d=document.getElementById('heard-detail');
+  if(!info){d.style.display='none';return;}
+  d.style.display='flex';
+  var img=document.getElementById('hd-img');
+  if(info.imageUrl){img.src=info.imageUrl;img.style.display='';}else{img.style.display='none';}
+  var callEl=document.getElementById('hd-call');
+  callEl.textContent=(info.heardAs&&info.heardAs!==info.call)?info.heardAs:info.call||'';
+  callEl.href='https://www.qrz.com/db/'+encodeURIComponent(info.call||'');
+  document.getElementById('hd-name').textContent=((info.firstName||'')+' '+(info.lastName||'')).trim();
+  document.getElementById('hd-loc').textContent=[info.city,info.state,info.country].filter(Boolean).join(', ');
+  document.getElementById('hd-grid').textContent=info.grid?'Grid: '+info.grid:'';
+  document.getElementById('hd-class').textContent=info.licenseClass?'Class: '+info.licenseClass:'';
+}
+function makeHeardRow(e){
+  var tr=document.createElement('tr');
+  tr.dataset.ts=e.timestamp;
+  tr.dataset.arrived=e.arrivedAt||Date.now(); // browser epoch ms — immune to server/browser clock skew
+  tr.dataset.call=e.callsign;
+  tr.dataset.mode=e.mode;
+  var mc=e.mode==='DMR'?'color:#3b82f6':e.mode==='YSF'?'color:#22c55e':'';
+  var qrzHref='https://www.qrz.com/db/'+encodeURIComponent(baseCall(e.callsign));
+  tr.innerHTML='<td><a href="'+qrzHref+'" target="_blank" class="map-call-link">'+esc(e.callsign)+'</a></td>'
+    +'<td style="'+mc+'">'+esc(e.mode)+'</td><td>'+esc(e.info)+'</td>'
+    +'<td class="dur-cell">'+esc(e.duration)+'</td>'
+    +'<td class="loss-cell">'+esc(e.loss||'')+'</td>'
+    +'<td>'+timeAgoMs(tr.dataset.arrived)+'</td>';
+  return tr;
+}
+function timeAgoMs(ms){var d=Math.floor((Date.now()-Number(ms))/1000);if(d<60)return d+'s ago';if(d<3600)return Math.floor(d/60)+'m ago';if(d<86400)return Math.floor(d/3600)+'h ago';return Math.floor(d/86400)+'d ago';}
+function findHeardRow(callsign,mode,timestamp){
+  var sel=timestamp
+    ?'#lastHeardBody tr[data-call="'+CSS.escape(callsign)+'"][data-mode="'+CSS.escape(mode)+'"][data-ts="'+CSS.escape(timestamp)+'"]'
+    :'#lastHeardBody tr[data-call="'+CSS.escape(callsign)+'"][data-mode="'+CSS.escape(mode)+'"]';
+  return document.querySelector(sel);
+}
 function appendOrUpdateLastHeard(e){
   var tb=document.getElementById('lastHeardBody');
   var tbl=document.getElementById('lastHeardTable');
   var emp=document.getElementById('lastHeardEmpty');
-  var idx=-1;
-  for(var i=0;i<lastHeardEntries.length;i++){if(lastHeardEntries[i].callsign===e.callsign&&lastHeardEntries[i].mode===e.mode){idx=i;break;}}
-  if(idx>=0){lastHeardEntries.splice(idx,1);}
+  // Same transmission — duration update only: patch the cell, no DOM restructure.
+  var sameIdx=-1;
+  for(var i=0;i<lastHeardEntries.length;i++){
+    if(lastHeardEntries[i].callsign===e.callsign&&lastHeardEntries[i].mode===e.mode&&lastHeardEntries[i].timestamp===e.timestamp){sameIdx=i;break;}
+  }
+  if(sameIdx>=0){
+    lastHeardEntries[sameIdx].duration=e.duration;
+    lastHeardEntries[sameIdx].loss=e.loss||'';
+    var cell=findHeardRow(e.callsign,e.mode,e.timestamp);
+    if(cell){
+      cell.querySelector('.dur-cell').textContent=e.duration;
+      cell.querySelector('.loss-cell').textContent=e.loss||'';
+    }
+    return;
+  }
+  // New entry — remove old row for this callsign+mode if present, prepend new row.
+  var oldIdx=-1;
+  for(var i=0;i<lastHeardEntries.length;i++){if(lastHeardEntries[i].callsign===e.callsign&&lastHeardEntries[i].mode===e.mode){oldIdx=i;break;}}
+  if(oldIdx>=0){
+    lastHeardEntries.splice(oldIdx,1);
+    var oldRow=findHeardRow(e.callsign,e.mode,null);
+    if(oldRow)oldRow.parentNode.removeChild(oldRow);
+  }
+  e.arrivedAt=Date.now();
   lastHeardEntries.unshift(e);
-  if(lastHeardEntries.length>50)lastHeardEntries.length=50;
+  if(lastHeardEntries.length>50){
+    lastHeardEntries.length=50;
+    if(tb.rows.length>50)tb.deleteRow(tb.rows.length-1);
+  }
   tbl.style.display='';emp.style.display='none';
-  var html='';
-  lastHeardEntries.forEach(function(e){
-    var mc=e.mode==='DMR'?'color:#3b82f6':e.mode==='YSF'?'color:#22c55e':'';
-    html+='<tr><td>'+esc(e.callsign)+'</td><td style="'+mc+'">'+esc(e.mode)+'</td><td>'+esc(e.info)+'</td><td>'+esc(e.duration)+'</td><td>'+timeAgo(e.timestamp)+'</td></tr>';
-  });
-  tb.innerHTML=html;
+  tb.insertBefore(makeHeardRow(e),tb.firstChild);
+  // Map pin — use cache if available (no fly), otherwise lookup and fly once.
+  if(typeof openrig!=='undefined'&&openrig.lookupCallsign){
+    var lookupCall=baseCall(e.callsign);
+    if(heardCallsignInfo[lookupCall]){
+      initHeardMap();
+      var cachedInfo=Object.assign({},heardCallsignInfo[lookupCall],{heardAs:e.callsign});
+      updateMapPin(cachedInfo,pinnedCallsign===null);
+      if(pinnedCallsign===null)showHeardDetail(cachedInfo);
+    } else {
+      openrig.lookupCallsign(lookupCall).then(function(info){
+        if(info&&info.lat&&info.lon){
+          initHeardMap();
+          heardCallsignInfo[info.call]=info;
+          var infoWithOrig=Object.assign({},info,{heardAs:e.callsign});
+          updateMapPin(infoWithOrig,pinnedCallsign===null);
+          if(pinnedCallsign===null)showHeardDetail(infoWithOrig);
+        }
+      }).catch(function(){});
+    }
+  }
 }
 var talkgroups=[];
 var tgNames={};
@@ -1715,8 +1949,8 @@ function loadHotspot(){
     var modem=d.modem||{};
     document.getElementById('modem-type').value=modem.type||'mmdvm_hs_hat';
     document.getElementById('modem-port').value=modem.port||'/dev/ttyAMA0';
-    document.getElementById('rf-frequency').value=d.rfFrequency||'';
-    document.getElementById('tx-frequency').value=d.txFrequency||0;
+    document.getElementById('rf-frequency').value=d.rfFrequency?(+d.rfFrequency).toFixed(4):'';
+    document.getElementById('tx-frequency').value=d.txFrequency?(+d.txFrequency).toFixed(4):'0.0000';
     document.getElementById('dmr-enabled').checked=d.dmr.enabled;
     document.getElementById('dmr-id').value=d.dmr.dmrId||'';
     document.getElementById('dmr-id-suffix').value=d.dmr.dmrIdSuffix||0;
@@ -1738,7 +1972,10 @@ function loadHotspot(){
     if(yn==='fcs'){document.getElementById('fcs-module').value=d.ysf.module||'A';loadYsfList('fcs','fcs-room',d.ysf.reflector||'');}
     else if(yn==='custom'){document.getElementById('ysf-custom-server').value=d.ysf.reflector||'';}
     else{loadYsfList('ysf','ysf-reflector',d.ysf.reflector||'');}
+    // Link manager dropdowns
+    loadYsfList('ysf','lm-ysf-ref',d.ysf.reflector||'');
     document.getElementById('ysf-description').value=d.ysf.description||'';
+    document.getElementById('ysf-wiresx-passthrough').checked=d.ysf.wiresxPassthrough||false;
     document.getElementById('ysf2dmr-enabled').checked=d.crossMode.ysf2dmrEnabled;
     document.getElementById('ysf2dmr-tg').value=d.crossMode.ysf2dmrTalkgroup||'';
   }).catch(function(e){console.error('loadHotspot failed:',e);});
@@ -1775,12 +2012,13 @@ function saveHotspot(){
       var r=n==='fcs'?document.getElementById('fcs-room').value:n==='custom'?document.getElementById('ysf-custom-server').value:document.getElementById('ysf-reflector').value;
       return{enabled:document.getElementById('ysf-enabled').checked,
       network:n,reflector:r,module:n==='fcs'?document.getElementById('fcs-module').value:'',
-      description:document.getElementById('ysf-description').value}})(),
+      description:document.getElementById('ysf-description').value,
+      wiresxPassthrough:document.getElementById('ysf-wiresx-passthrough').checked}})(),
     crossMode:{ysf2dmrEnabled:document.getElementById('ysf2dmr-enabled').checked,
       ysf2dmrTalkgroup:parseInt(document.getElementById('ysf2dmr-tg').value)||0,
       dmr2ysfEnabled:false,dmr2ysfRoom:''}
   };
-  openrig.updateHotspot(body).then(function(){toast('Hotspot config saved');}).catch(function(e){toast(e.message,true);});
+  openrig.updateHotspot(body).then(function(){toast('Hotspot config saved');openrig.getHotspot().then(renderHotspotStatus).catch(function(){});}).catch(function(e){toast(e.message,true);});
 }
 var wifiNets=[];
 function loadWifi(){
@@ -1809,8 +2047,27 @@ function saveWifi(){
   var nets=wifiNets.map(function(n,i){return{ssid:n.ssid,password:n.password||'',security:n.security||'auto',priority:wifiNets.length-i};});
   openrig.updateWifi({networks:nets}).then(function(){toast('WiFi config saved');}).catch(function(e){toast(e.message,true);});
 }
+function onStreamError(n){
+  var w=document.getElementById('conn-warn');
+  if(n===0){w.style.display='none';return;}
+  document.getElementById('conn-warn-count').textContent=n;
+  w.style.display='';
+}
 function restartSvc(name){
   openrig.restartService(name).then(function(){toast(name+' restarted');}).catch(function(e){toast(e.message,true);});
+}
+function lmRequestChange(mode,action){
+  var cmd='';
+  if(mode==='ysf'){
+    if(action==='unlink'){cmd='UnLink';}
+    else{var r=document.getElementById('lm-ysf-ref').value;if(!r){toast('Select a reflector first',true);return;}cmd='LinkYSF '+r;}
+  } else {
+    cmd=action==='link'?'enable net1':'disable net1';
+  }
+  fetch('/gateway-cmd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gateway:mode,command:cmd})})
+    .then(function(r){if(!r.ok)throw new Error('Request failed ('+r.status+')');return r.json();})
+    .then(function(){toast(action==='link'?'Link command sent':'Unlink command sent');})
+    .catch(function(e){toast((e&&e.message)||'Command failed',true);});
 }
 function loadDevice(){
   openrig.getConfig().then(function(d){
@@ -1819,22 +2076,91 @@ function loadDevice(){
     document.getElementById('dev-name').value=d.name||'';
     document.getElementById('dev-grid').value=d.gridSquare||'';
     document.getElementById('dev-timezone').value=d.timezone||'UTC';
+    document.getElementById('dev-qrz-user').value=d.qrzUsername||'';
+    document.getElementById('dev-qrz-pass').value=d.qrzPassword||'';
   }).catch(function(){});
+}
+function testQrzCreds(){
+  var callsign=document.getElementById('dev-callsign').value||'KC1YGY';
+  var res=document.getElementById('qrz-test-result');
+  res.style.display='';res.style.color='#94a3b8';res.textContent='Saving credentials…';
+  // Save device config first so the lookup uses the credentials currently in the form
+  var body={callsign:document.getElementById('dev-callsign').value,hostname:document.getElementById('dev-hostname').value,
+    name:document.getElementById('dev-name').value,gridSquare:document.getElementById('dev-grid').value,
+    timezone:document.getElementById('dev-timezone').value,
+    qrzUsername:document.getElementById('dev-qrz-user').value,
+    qrzPassword:document.getElementById('dev-qrz-pass').value};
+  openrig.updateConfig(body).then(function(){
+    res.textContent='Testing lookup for '+callsign+'…';
+    return openrig.lookupCallsign(callsign);
+  }).then(function(info){
+    var name=((info.firstName||'')+' '+(info.lastName||'')).trim();
+    res.style.color='#22c55e';
+    res.textContent='OK — '+info.call+(name?' ('+name+')':'')+(info.city?', '+info.city:'')+(info.state?', '+info.state:'');
+  }).catch(function(e){
+    res.style.color='#ef4444';
+    res.textContent='Failed: '+e.message;
+  });
 }
 function saveDevice(){
   var body={callsign:document.getElementById('dev-callsign').value,hostname:document.getElementById('dev-hostname').value,
     name:document.getElementById('dev-name').value,gridSquare:document.getElementById('dev-grid').value,
-    timezone:document.getElementById('dev-timezone').value};
+    timezone:document.getElementById('dev-timezone').value,
+    qrzUsername:document.getElementById('dev-qrz-user').value,
+    qrzPassword:document.getElementById('dev-qrz-pass').value};
   openrig.updateConfig(body).then(function(){toast('Device config saved');openrig.getStatus().then(renderStatus).catch(function(){});}).catch(function(e){toast(e.message,true);});
 }
 function esc(s){if(!s)return'';var d=document.createElement('div');d.appendChild(document.createTextNode(s));return d.innerHTML;}
+function renderHotspotStatus(d){
+  var card=document.getElementById('hs-card');
+  if(!card)return;
+  card.style.display='';
+  var ysfOn=!!(d.ysf&&d.ysf.enabled);
+  document.getElementById('lm-ysf-panel').style.display=ysfOn?'':'none';
+  document.getElementById('lm-container').style.display=ysfOn?'':'none';
+  function mode(id,on){var el=document.getElementById(id);el.className='hs-mode'+(on?' on':'');}
+  mode('hs-dmr',d.dmr&&d.dmr.enabled);
+  mode('hs-ysf',d.ysf&&d.ysf.enabled);
+  mode('hs-ysf2dmr',d.crossMode&&d.crossMode.ysf2dmrEnabled);
+  mode('hs-dmr2ysf',d.crossMode&&d.crossMode.dmr2ysfEnabled);
+  document.getElementById('hs-freq').textContent=d.rfFrequency?(d.rfFrequency.toFixed(4)+' MHz'):'--';
+  if(d.dmr&&d.dmr.enabled){
+    document.getElementById('hs-cc').textContent=d.dmr.colorcode||'--';
+    document.getElementById('hs-id').textContent=d.dmr.dmrId||'--';
+    document.getElementById('hs-cc-row').style.display='';
+    document.getElementById('hs-id-row').style.display='';
+  } else {
+    document.getElementById('hs-cc-row').style.display='none';
+    document.getElementById('hs-id-row').style.display='none';
+  }
+  var netEl=document.getElementById('hs-net');
+  if(d.dmr&&d.dmr.enabled&&d.dmr.server){
+    document.getElementById('hs-net-hdr').textContent='DMR Network';
+    netEl.textContent=d.dmr.server;
+    netEl.className='hs-full';
+  } else if(d.ysf&&d.ysf.enabled&&d.ysf.reflector){
+    document.getElementById('hs-net-hdr').textContent='YSF Reflector';
+    netEl.textContent=d.ysf.reflector;
+    var ls=d.ysf.linkState||'unlinked';
+    netEl.className='hs-full '+(ls==='linking'?'linked':ls==='relinking'?'linking':'unlinked');
+  } else {
+    document.getElementById('hs-net-hdr').textContent='Network';
+    netEl.textContent='--';
+    netEl.className='hs-full';
+  }
+}
 function initPage(){
   makeCombo('dmr-server');
   makeCombo('ysf-reflector');
   makeCombo('fcs-room');
+  makeCombo('lm-ysf-ref');
+  initHeardMap();
   openrig.getStatus().then(renderStatus).catch(function(){});
-  openrig.streamStatus(renderStatus);
-  openrig.streamLastHeard(appendOrUpdateLastHeard);
+  openrig.streamStatus(renderStatus,onStreamError);
+  openrig.streamLastHeard(appendOrUpdateLastHeard,onStreamError);
+  setInterval(function(){document.querySelectorAll('#lastHeardBody tr').forEach(function(tr){var a=tr.dataset.arrived;if(a){tr.cells[tr.cells.length-1].textContent=timeAgoMs(a);}});},30000);
+  openrig.getHotspot().then(renderHotspotStatus).catch(function(){});
+  setInterval(function(){openrig.getHotspot().then(renderHotspotStatus).catch(function(){});},10000);
   loadHotspot();loadWifi();loadDevice();
   document.getElementById('ysf2dmr-tg').addEventListener('input',updateTGName);
 }
@@ -1885,19 +2211,26 @@ func main() {
 		log.Fatalf("Cannot read %s: %v", configPath, err)
 	}
 
-	// Determine GOROOT for wasm_exec.js
-	goroot := os.Getenv("GOROOT")
-	if goroot == "" {
-		out, err := exec.Command("go", "env", "GOROOT").Output()
-		if err != nil {
-			log.Fatalf("Cannot determine GOROOT: %v", err)
+	// Locate wasm_exec.js — in dev mode resolve via GOROOT, in production
+	// use the pre-built copy installed alongside the binary.
+	var wasmExecPath string
+	if devMode {
+		goroot := os.Getenv("GOROOT")
+		if goroot == "" {
+			out, err := exec.Command("go", "env", "GOROOT").Output()
+			if err != nil {
+				log.Fatalf("Dev mode: cannot determine GOROOT: %v", err)
+			}
+			goroot = strings.TrimSpace(string(out))
 		}
-		goroot = strings.TrimSpace(string(out))
+		wasmExecPath = filepath.Join(goroot, "lib", "wasm", "wasm_exec.js")
+	} else {
+		wasmExecPath = "/usr/local/lib/openrig/wasm_exec.js"
 	}
-	wasmExecPath := filepath.Join(goroot, "lib", "wasm", "wasm_exec.js")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleIndex)
+	mux.HandleFunc("/gateway-cmd", handleGatewayCmd)
 	mux.HandleFunc("/scan", handleScan)
 	mux.HandleFunc("/provision", handleProvision)
 	mux.HandleFunc("/management", handleManagement)
@@ -1914,9 +2247,13 @@ func main() {
 		w.Header().Set("Content-Type", "application/javascript")
 		http.ServeFile(w, r, wasmExecPath)
 	})
+	wasmBinPath := "/usr/local/lib/openrig/openrig.wasm"
+	if devMode {
+		wasmBinPath = "/tmp/openrig.wasm"
+	}
 	mux.HandleFunc("/openrig.wasm", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/wasm")
-		http.ServeFile(w, r, "/tmp/openrig.wasm")
+		http.ServeFile(w, r, wasmBinPath)
 	})
 
 	log.Printf("openRigOS web UI listening on %s", listenAddr)

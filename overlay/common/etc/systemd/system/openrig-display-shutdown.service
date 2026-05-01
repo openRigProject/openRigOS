@@ -1,0 +1,13 @@
+[Unit]
+Description=openRig — Shutdown display message
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target
+Requires=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/openrig-display "Shutting down..."
+RemainAfterExit=no
+
+[Install]
+WantedBy=shutdown.target reboot.target halt.target

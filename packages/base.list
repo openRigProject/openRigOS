@@ -40,8 +40,16 @@ gnupg
 libhamlib4
 libhamlib-utils
 
+# MQTT broker + runtime library — required by MMDVMHost, DMRGateway, YSFGateway
+mosquitto
+mosquitto-clients
+libmosquitto1
+
 # Serial port support (radio CAT control, TNC, etc.)
 minicom
+
+# Time sync
+systemd-timesyncd
 
 # Config / system utilities
 jq

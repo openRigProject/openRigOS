@@ -152,6 +152,8 @@ type DeviceConfig struct {
 	Timezone      string                 `protobuf:"bytes,3,opt,name=timezone,proto3" json:"timezone,omitempty"`
 	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
 	GridSquare    string                 `protobuf:"bytes,5,opt,name=grid_square,json=gridSquare,proto3" json:"grid_square,omitempty"`
+	QrzUsername   string                 `protobuf:"bytes,6,opt,name=qrz_username,json=qrzUsername,proto3" json:"qrz_username,omitempty"`
+	QrzPassword   string                 `protobuf:"bytes,7,opt,name=qrz_password,json=qrzPassword,proto3" json:"qrz_password,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -217,6 +219,20 @@ func (x *DeviceConfig) GetName() string {
 func (x *DeviceConfig) GetGridSquare() string {
 	if x != nil {
 		return x.GridSquare
+	}
+	return ""
+}
+
+func (x *DeviceConfig) GetQrzUsername() string {
+	if x != nil {
+		return x.QrzUsername
+	}
+	return ""
+}
+
+func (x *DeviceConfig) GetQrzPassword() string {
+	if x != nil {
+		return x.QrzPassword
 	}
 	return ""
 }
@@ -547,14 +563,16 @@ const file_openrig_v1_device_proto_rawDesc = "" +
 	"\rdisk_total_gb\x18\n" +
 	" \x01(\x01R\vdiskTotalGb\x12 \n" +
 	"\fdisk_used_gb\x18\v \x01(\x01R\n" +
-	"diskUsedGb\"\x97\x01\n" +
+	"diskUsedGb\"\xdd\x01\n" +
 	"\fDeviceConfig\x12\x1a\n" +
 	"\bcallsign\x18\x01 \x01(\tR\bcallsign\x12\x1a\n" +
 	"\bhostname\x18\x02 \x01(\tR\bhostname\x12\x1a\n" +
 	"\btimezone\x18\x03 \x01(\tR\btimezone\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x12\x1f\n" +
 	"\vgrid_square\x18\x05 \x01(\tR\n" +
-	"gridSquare\"G\n" +
+	"gridSquare\x12!\n" +
+	"\fqrz_username\x18\x06 \x01(\tR\vqrzUsername\x12!\n" +
+	"\fqrz_password\x18\a \x01(\tR\vqrzPassword\"G\n" +
 	"\x13UpdateConfigRequest\x120\n" +
 	"\x06config\x18\x01 \x01(\v2\x18.openrig.v1.DeviceConfigR\x06config\"1\n" +
 	"\x15RestartServiceRequest\x12\x18\n" +

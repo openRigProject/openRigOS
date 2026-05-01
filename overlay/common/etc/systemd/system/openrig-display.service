@@ -1,0 +1,13 @@
+[Unit]
+Description=openRig OLED display daemon
+After=multi-user.target mosquitto.service
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/openrig-display -daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

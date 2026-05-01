@@ -10,8 +10,8 @@ STAGING_DIR="/tmp/openrigos-bins"
 
 echo "[00-gobuilds] Compiling Go binaries (GOOS=linux GOARCH=${GOARCH})..."
 
-rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}"
+rm -rf "${STAGING_DIR:?}"/*
 
 build() {
     local name="$1"
@@ -21,7 +21,31 @@ build() {
         go build -ldflags="-s -w" -o "${STAGING_DIR}/${name}" . )
 }
 
-build "openrig-provision-web" "/build/src/webprovision"
-build "openrig-api"           "/build/src/openrig-api"
+if [ "${ONLY_API:-0}" = "1" ]; then
+    build "openrig-api" "/build/src/openrig-api"
+elif [ "${ONLY_WEB:-0}" = "1" ]; then
+    build "openrig-provision-web" "/build/src/webprovision"
+elif [ "${ONLY_DISPLAY:-0}" = "1" ]; then
+    build "openrig-display" "/build/src/openrig-display"
+elif [ "${ONLY_WASM:-0}" = "1" ]; then
+    echo "[00-gobuilds]   openrig.wasm"
+    ( cd /build/src && GOOS=js GOARCH=wasm CGO_ENABLED=0 \
+        go build -ldflags="-s -w" -o "${STAGING_DIR}/openrig.wasm" ./wasm/ )
+    GOROOT_PATH=$(go env GOROOT)
+    cp "${GOROOT_PATH}/lib/wasm/wasm_exec.js" "${STAGING_DIR}/wasm_exec.js"
+else
+    build "openrig-provision-web" "/build/src/webprovision"
+    build "openrig-api"           "/build/src/openrig-api"
+    build "openrig-display"       "/build/src/openrig-display"
+
+    # Build WASM client (runs in the browser, not on the device CPU)
+    echo "[00-gobuilds]   openrig.wasm"
+    ( cd /build/src && GOOS=js GOARCH=wasm CGO_ENABLED=0 \
+        go build -ldflags="-s -w" -o "${STAGING_DIR}/openrig.wasm" ./wasm/ )
+
+    # Stage wasm_exec.js from this Go toolchain's GOROOT
+    GOROOT_PATH=$(go env GOROOT)
+    cp "${GOROOT_PATH}/lib/wasm/wasm_exec.js" "${STAGING_DIR}/wasm_exec.js"
+fi
 
 echo "[00-gobuilds] Done. Binaries staged in ${STAGING_DIR}"

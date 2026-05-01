@@ -26,12 +26,14 @@ message DMRConfig {
 }
 
 message YSFConfig {
-  bool   enabled     = 1;
-  string network     = 2; // "ysf"|"fcs"|"custom"
-  string reflector   = 3; // e.g. "AMERICA" for YSF, "FCS001" for FCS
-  string module      = 4; // FCS module letter "A"-"Z"
-  string suffix      = 5;
-  string description = 6;
+  bool   enabled              = 1;
+  string network              = 2; // "ysf"|"fcs"|"custom"
+  string reflector            = 3; // e.g. "AMERICA" for YSF, "FCS001" for FCS
+  string module               = 4; // FCS module letter "A"-"Z"
+  string suffix               = 5;
+  string description          = 6;
+  bool   wiresx_passthrough   = 7; // pass WiresX commands through to the reflector
+  string link_state           = 8; // runtime only: "linking"|"relinking"|"unlinked" — not persisted
 }
 
 message CrossModeConfig {
@@ -82,6 +84,25 @@ message LastHeardEntry {
   string info      = 3; // TG number for DMR, room name for YSF
   string duration  = 4; // e.g. "12s"
   string timestamp = 5; // RFC3339
+  string loss      = 6; // bit error rate, e.g. "0.65%"
+}
+
+message LookupCallsignRequest {
+  string callsign = 1;
+}
+
+message CallsignInfo {
+  string call          = 1;
+  string first_name    = 2;
+  string last_name     = 3;
+  string city          = 4;
+  string state         = 5;
+  string country       = 6;
+  string grid          = 7;
+  double lat           = 8;
+  double lon           = 9;
+  string license_class = 10;
+  string image_url     = 11;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────
@@ -92,8 +113,10 @@ service HotspotService {
   rpc UpdateDmrId(UpdateDmrIdRequest)        returns (UpdateDmrIdResponse);
 
   // GetServers returns the server list for a given network.
-  // Returns hardcoded fallback immediately; live fetch warms the cache.
   rpc GetServers(GetServersRequest)          returns (GetServersResponse);
+
+  // LookupCallsign queries QRZ.com for callsign details.
+  rpc LookupCallsign(LookupCallsignRequest)  returns (CallsignInfo);
 
   // StreamLastHeard streams new last-heard entries as they appear.
   rpc StreamLastHeard(Empty)                 returns (stream LastHeardEntry);

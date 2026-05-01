@@ -21,11 +21,13 @@ message DeviceStatus {
 }
 
 message DeviceConfig {
-  string callsign    = 1;
-  string hostname    = 2;
-  string timezone    = 3;
-  string name        = 4;
-  string grid_square = 5;
+  string callsign     = 1;
+  string hostname     = 2;
+  string timezone     = 3;
+  string name         = 4;
+  string grid_square  = 5;
+  string qrz_username = 6;
+  string qrz_password = 7;
 }
 
 message UpdateConfigRequest {

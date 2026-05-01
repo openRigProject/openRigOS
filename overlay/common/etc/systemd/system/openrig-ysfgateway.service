@@ -15,7 +15,7 @@ User=openrig
 # Harden
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/var/log/openrig /run
+ReadWritePaths=/var/log/openrig /run /usr/local/etc
 
 StandardOutput=journal
 StandardError=journal

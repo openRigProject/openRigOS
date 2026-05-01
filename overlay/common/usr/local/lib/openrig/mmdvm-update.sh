@@ -33,8 +33,12 @@ YSF_ENABLED=$(jq -r 'if .openrig.hotspot.ysf.enabled then "1" else "0" end' "$OP
 MODEM_PORT=$(jq -r '.openrig.hotspot.modem.port // "/dev/ttyAMA0"' "$OPENRIG_JSON")
 MODEM_SPEED=$(jq -r '.openrig.hotspot.modem.speed // 115200' "$OPENRIG_JSON")
 
-# DMR ID: check operator-level first, fall back to hotspot-level
-DMR_ID=$(jq -r '.openrig.operator.dmr_id // .openrig.hotspot.dmr.dmr_id // 0' "$OPENRIG_JSON")
+# DMR ID: use operator-level if > 0, otherwise fall back to hotspot-level
+DMR_ID=$(jq -r '
+  (.openrig.operator.dmr_id // 0) as $op |
+  (.openrig.hotspot.dmr.dmr_id // 0) as $hs |
+  if $op > 0 then $op else $hs end
+' "$OPENRIG_JSON")
 # Optional 2-digit hotspot suffix (01–99) appended to form a 9-digit hotspot ID.
 DMR_ID_SUFFIX=$(jq -r '.openrig.hotspot.dmr.dmr_id_suffix // 0' "$OPENRIG_JSON")
 if [ "$DMR_ID_SUFFIX" -gt 0 ] 2>/dev/null; then
@@ -44,15 +48,25 @@ BM_SERVER=$(jq -r '.openrig.hotspot.dmr.bm_server // "uk.brandmeister.network"' 
 BM_PASSWORD=$(jq -r '.openrig.hotspot.dmr.bm_password // ""' "$OPENRIG_JSON")
 YSF_REFLECTOR=$(jq -r '.openrig.hotspot.ysf.reflector // "AMERICA"' "$OPENRIG_JSON")
 YSF_SUFFIX=$(jq -r '.openrig.hotspot.ysf.suffix // ""' "$OPENRIG_JSON")
+YSF_DESCRIPTION=$(jq -r '.openrig.hotspot.ysf.description // "openRigOS Hotspot"' "$OPENRIG_JSON")
+YSF_WIRESX=$(jq -r 'if .openrig.hotspot.ysf.wiresx_passthrough then "1" else "0" end' "$OPENRIG_JSON")
 
 # Derive YSF suffix from callsign if not explicitly set (last 4 chars, uppercased)
 if [ -z "$YSF_SUFFIX" ]; then
     YSF_SUFFIX=$(echo "${CALLSIGN}" | tr '[:lower:]' '[:upper:]' | grep -oP '.{1,4}$' || echo "ND")
 fi
 
-# Read frequencies (default to 2m simplex: 145.500 MHz)
-RX_FREQ=$(jq -r '.openrig.hotspot.rx_frequency // "145500000"' "$OPENRIG_JSON")
-TX_FREQ=$(jq -r '.openrig.hotspot.tx_frequency // "145500000"' "$OPENRIG_JSON")
+# Read frequencies — stored in MHz in openrig.json, convert to Hz for MMDVM.
+# rf_frequency is the RX freq (and TX for simplex); tx_frequency is the TX freq for duplex.
+# Default to 145.500 MHz simplex if unset.
+RX_FREQ=$(jq -r '(.openrig.hotspot.rf_frequency // 145.500) * 1000000 | floor | tostring' "$OPENRIG_JSON")
+TX_FREQ_RAW=$(jq -r '.openrig.hotspot.tx_frequency // 0' "$OPENRIG_JSON")
+# If tx_frequency is 0 or unset, use rf_frequency (simplex)
+if [ "$TX_FREQ_RAW" = "0" ] || [ -z "$TX_FREQ_RAW" ]; then
+    TX_FREQ="$RX_FREQ"
+else
+    TX_FREQ=$(jq -r '(.openrig.hotspot.tx_frequency) * 1000000 | floor | tostring' "$OPENRIG_JSON")
+fi
 
 if [ -z "$CALLSIGN" ]; then
     log "No callsign set — leaving config files with placeholders."
@@ -86,13 +100,14 @@ if [ "$DMR_ID" != "0" ] && [ -n "$DMR_ID" ]; then
 fi
 
 # Section-aware updates for enable flags, modem, frequencies
-awk -v dmr="$DMR_ENABLED" -v ysf="$YSF_ENABLED" -v port="$MODEM_PORT" -v speed="$MODEM_SPEED" \
+awk -v dmr="$DMR_ENABLED" -v ysf="$YSF_ENABLED" \
+    -v port="$MODEM_PORT" -v speed="$MODEM_SPEED" \
     -v rxf="$RX_FREQ" -v txf="$TX_FREQ" '
     /^\[/ { section = $0 }
     /^Enable=/ && (section == "[DMR]" || section == "[DMR Network]") { $0 = "Enable=" dmr }
     /^Enable=/ && (section == "[System Fusion]" || section == "[System Fusion Network]") { $0 = "Enable=" ysf }
-    /^Port=/ && section == "[Modem]" { $0 = "Port=" port }
-    /^Speed=/ && section == "[Modem]" { $0 = "Speed=" speed }
+    /^UARTPort=/ && section == "[Modem]" { $0 = "UARTPort=" port }
+    /^UARTSpeed=/ && section == "[Modem]" { $0 = "UARTSpeed=" speed }
     /^RXFrequency=/ && (section == "[Info]" || section == "[Modem]") { $0 = "RXFrequency=" rxf }
     /^TXFrequency=/ && (section == "[Info]" || section == "[Modem]") { $0 = "TXFrequency=" txf }
     { print }
@@ -138,17 +153,22 @@ if [ -f "$YSFGW_INI" ]; then
         -e "s|__CALLSIGN__|${CALLSIGN}|g" \
         -e "s|__DMR_ID__|${DMR_ID}|g" \
         -e "s|__YSF_SUFFIX__|${YSF_SUFFIX}|g" \
+        -e "s|__YSF_DESCRIPTION__|${YSF_DESCRIPTION}|g" \
+        -e "s|__YSF_WIRESX_PASSTHROUGH__|${YSF_WIRESX}|g" \
         -e "s|__RX_FREQ__|${RX_FREQ}|g" \
         -e "s|__TX_FREQ__|${TX_FREQ}|g" \
         "$YSFGW_INI"
 
     # Update already-resolved values (re-provisioning)
     awk -v cs="$CALLSIGN" -v id="$DMR_ID" -v suf="$YSF_SUFFIX" -v ref="$YSF_REFLECTOR" \
-        -v rxf="$RX_FREQ" -v txf="$TX_FREQ" '
+        -v desc="$YSF_DESCRIPTION" -v wiresx="$YSF_WIRESX" -v rxf="$RX_FREQ" -v txf="$TX_FREQ" '
         /^\[/ { section = $0 }
         /^Callsign=/ && section == "[General]" { $0 = "Callsign=" cs }
         /^Id=/ && section == "[General]" { $0 = "Id=" id }
         /^Suffix=/ && section == "[General]" { $0 = "Suffix=" suf }
+        /^WiresXCommandPassthrough=/ && section == "[General]" { $0 = "WiresXCommandPassthrough=" wiresx }
+        /^Name=/ && section == "[Info]" { $0 = "Name=" cs }
+        /^Description=/ && section == "[Info]" { $0 = "Description=" desc }
         /^Startup=/ && section == "[Network]" { $0 = "Startup=" ref }
         /^RXFrequency=/ && section == "[Info]" { $0 = "RXFrequency=" rxf }
         /^TXFrequency=/ && section == "[Info]" { $0 = "TXFrequency=" txf }

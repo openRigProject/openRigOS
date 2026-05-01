@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"syscall/js"
+	"time"
 
 	"connectrpc.com/connect"
 	openrigv1 "openrig/gen/openrig/v1"
@@ -42,8 +43,9 @@ func main() {
 		"getHotspot":      js.FuncOf(jsGetHotspot),
 		"updateHotspot":   js.FuncOf(jsUpdateHotspot),
 		"updateDmrId":     js.FuncOf(jsUpdateDmrId),
-		"getServers":      js.FuncOf(jsGetServers),
-		"streamLastHeard": js.FuncOf(jsStreamLastHeard),
+		"getServers":       js.FuncOf(jsGetServers),
+		"lookupCallsign":   js.FuncOf(jsLookupCallsign),
+		"streamLastHeard":  js.FuncOf(jsStreamLastHeard),
 		"getWifi":         js.FuncOf(jsGetWifi),
 		"updateWifi":      js.FuncOf(jsUpdateWifi),
 		"scanWifi":        js.FuncOf(jsScanWifi),
@@ -93,19 +95,49 @@ func jsGetStatus(_ js.Value, _ []js.Value) any {
 
 func jsStreamStatus(_ js.Value, args []js.Value) any {
 	callback := args[0]
-	go func() {
-		stream, err := deviceClient.StreamStatus(context.Background(), connect.NewRequest(&openrigv1.Empty{}))
-		if err != nil {
-			return
+	var onError js.Value
+	if len(args) > 1 && args[1].Type() == js.TypeFunction {
+		onError = args[1]
+	}
+	notifyError := func(n int) {
+		if onError.Type() == js.TypeFunction {
+			onError.Invoke(n)
 		}
-		defer stream.Close()
-		for stream.Receive() {
-			b, err := jsonOpts.Marshal(stream.Msg())
+	}
+	go func() {
+		failures := 0
+		for {
+			stream, err := deviceClient.StreamStatus(context.Background(), connect.NewRequest(&openrigv1.Empty{}))
 			if err != nil {
+				failures++
+				if failures > 3 {
+					notifyError(failures)
+					time.Sleep(10 * time.Second)
+				} else {
+					time.Sleep(2 * time.Second)
+				}
 				continue
 			}
-			parsed := js.Global().Get("JSON").Call("parse", string(b))
-			callback.Invoke(parsed)
+			if failures > 0 {
+				notifyError(0) // signal recovery
+			}
+			failures = 0
+			for stream.Receive() {
+				b, err := jsonOpts.Marshal(stream.Msg())
+				if err != nil {
+					continue
+				}
+				parsed := js.Global().Get("JSON").Call("parse", string(b))
+				callback.Invoke(parsed)
+			}
+			stream.Close()
+			failures++
+			if failures > 3 {
+				notifyError(failures)
+				time.Sleep(10 * time.Second)
+			} else {
+				time.Sleep(2 * time.Second)
+			}
 		}
 	}()
 	return js.Undefined()
@@ -223,21 +255,63 @@ func jsGetServers(_ js.Value, args []js.Value) any {
 	})
 }
 
+func jsLookupCallsign(_ js.Value, args []js.Value) any {
+	callsign := args[0].String()
+	return jsPromise(func() ([]byte, error) {
+		resp, err := hotspotClient.LookupCallsign(context.Background(),
+			connect.NewRequest(&openrigv1.LookupCallsignRequest{Callsign: callsign}))
+		if err != nil {
+			return nil, err
+		}
+		return jsonOpts.Marshal(resp.Msg)
+	})
+}
+
 func jsStreamLastHeard(_ js.Value, args []js.Value) any {
 	callback := args[0]
-	go func() {
-		stream, err := hotspotClient.StreamLastHeard(context.Background(), connect.NewRequest(&openrigv1.Empty{}))
-		if err != nil {
-			return
+	var onError js.Value
+	if len(args) > 1 && args[1].Type() == js.TypeFunction {
+		onError = args[1]
+	}
+	notifyError := func(n int) {
+		if onError.Type() == js.TypeFunction {
+			onError.Invoke(n)
 		}
-		defer stream.Close()
-		for stream.Receive() {
-			b, err := jsonOpts.Marshal(stream.Msg())
+	}
+	go func() {
+		failures := 0
+		for {
+			stream, err := hotspotClient.StreamLastHeard(context.Background(), connect.NewRequest(&openrigv1.Empty{}))
 			if err != nil {
+				failures++
+				if failures > 3 {
+					notifyError(failures)
+					time.Sleep(10 * time.Second)
+				} else {
+					time.Sleep(2 * time.Second)
+				}
 				continue
 			}
-			parsed := js.Global().Get("JSON").Call("parse", string(b))
-			callback.Invoke(parsed)
+			if failures > 0 {
+				notifyError(0) // signal recovery
+			}
+			failures = 0
+			for stream.Receive() {
+				b, err := jsonOpts.Marshal(stream.Msg())
+				if err != nil {
+					continue
+				}
+				parsed := js.Global().Get("JSON").Call("parse", string(b))
+				callback.Invoke(parsed)
+			}
+			stream.Close()
+			failures++
+			if failures > 3 {
+				notifyError(failures)
+				time.Sleep(10 * time.Second)
+			} else {
+				time.Sleep(2 * time.Second)
+			}
 		}
 	}()
 	return js.Undefined()

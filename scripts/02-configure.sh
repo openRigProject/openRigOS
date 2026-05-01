@@ -129,9 +129,26 @@ if [ -d "${BOARD_DIR}/overlay" ]; then
     rsync -a "${BOARD_DIR}/overlay/" "${ROOTFS_DIR}/"
 fi
 
-# 4. Ensure correct permissions on openrig.json
+# 4. Ensure correct permissions on openrig.json — must be writable by openrig user
 if [ -f "${OPENRIG_JSON}" ]; then
     chmod 644 "${OPENRIG_JSON}"
+    chroot "${ROOTFS_DIR}" chown openrig:openrig /etc/openrig.json
 fi
+
+# 4b. Ensure openrig user can write MMDVM/gateway ini files (API runs as openrig,
+#     NoNewPrivileges=true prevents sudo inside the service).
+for dir in /etc/mmdvm /etc/dmrgateway /etc/ysfgateway; do
+    if [ -d "${ROOTFS_DIR}${dir}" ]; then
+        chroot "${ROOTFS_DIR}" chown -R openrig:openrig "${dir}"
+    fi
+done
+
+# 5. Create runtime directories required by services before first boot
+#    (ProtectSystem=strict needs ReadWritePaths to exist at service start)
+chroot "${ROOTFS_DIR}" bash -c "
+    mkdir -p /var/log/openrig
+    chown openrig:openrig /var/log/openrig
+    chmod 755 /var/log/openrig
+"
 
 echo "[02-configure] Done."

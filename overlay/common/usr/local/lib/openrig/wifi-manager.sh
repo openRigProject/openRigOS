@@ -194,6 +194,8 @@ while [ "$ELAPSED" -lt "$FALLBACK_SECONDS" ]; do
     if has_ip; then
         IP=$(ip -4 addr show "$WIFI_IF" | awk '/inet /{print $2}')
         log "WiFi connected — ${WIFI_IF} got ${IP}"
+        # Kick timesyncd now that we have a network connection
+        systemctl restart systemd-timesyncd 2>/dev/null || true
         exit 0
     fi
     sleep "$POLL"

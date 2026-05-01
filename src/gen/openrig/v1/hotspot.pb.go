@@ -182,15 +182,17 @@ func (x *DMRConfig) GetDmrIdSuffix() int32 {
 }
 
 type YSFConfig struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	Network       string                 `protobuf:"bytes,2,opt,name=network,proto3" json:"network,omitempty"`     // "ysf"|"fcs"|"custom"
-	Reflector     string                 `protobuf:"bytes,3,opt,name=reflector,proto3" json:"reflector,omitempty"` // e.g. "AMERICA" for YSF, "FCS001" for FCS
-	Module        string                 `protobuf:"bytes,4,opt,name=module,proto3" json:"module,omitempty"`       // FCS module letter "A"-"Z"
-	Suffix        string                 `protobuf:"bytes,5,opt,name=suffix,proto3" json:"suffix,omitempty"`
-	Description   string                 `protobuf:"bytes,6,opt,name=description,proto3" json:"description,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Enabled           bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Network           string                 `protobuf:"bytes,2,opt,name=network,proto3" json:"network,omitempty"`     // "ysf"|"fcs"|"custom"
+	Reflector         string                 `protobuf:"bytes,3,opt,name=reflector,proto3" json:"reflector,omitempty"` // e.g. "AMERICA" for YSF, "FCS001" for FCS
+	Module            string                 `protobuf:"bytes,4,opt,name=module,proto3" json:"module,omitempty"`       // FCS module letter "A"-"Z"
+	Suffix            string                 `protobuf:"bytes,5,opt,name=suffix,proto3" json:"suffix,omitempty"`
+	Description       string                 `protobuf:"bytes,6,opt,name=description,proto3" json:"description,omitempty"`
+	WiresxPassthrough bool                   `protobuf:"varint,7,opt,name=wiresx_passthrough,json=wiresxPassthrough,proto3" json:"wiresx_passthrough,omitempty"` // pass WiresX commands through to the reflector
+	LinkState         string                 `protobuf:"bytes,8,opt,name=link_state,json=linkState,proto3" json:"link_state,omitempty"`                          // runtime only: "linking"|"linked"|"unlinked" — not persisted
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *YSFConfig) Reset() {
@@ -261,6 +263,20 @@ func (x *YSFConfig) GetSuffix() string {
 func (x *YSFConfig) GetDescription() string {
 	if x != nil {
 		return x.Description
+	}
+	return ""
+}
+
+func (x *YSFConfig) GetWiresxPassthrough() bool {
+	if x != nil {
+		return x.WiresxPassthrough
+	}
+	return false
+}
+
+func (x *YSFConfig) GetLinkState() string {
+	if x != nil {
+		return x.LinkState
 	}
 	return ""
 }
@@ -698,6 +714,7 @@ type LastHeardEntry struct {
 	Info          string                 `protobuf:"bytes,3,opt,name=info,proto3" json:"info,omitempty"`           // TG number for DMR, room name for YSF
 	Duration      string                 `protobuf:"bytes,4,opt,name=duration,proto3" json:"duration,omitempty"`   // e.g. "12s"
 	Timestamp     string                 `protobuf:"bytes,5,opt,name=timestamp,proto3" json:"timestamp,omitempty"` // RFC3339
+	Loss          string                 `protobuf:"bytes,6,opt,name=loss,proto3" json:"loss,omitempty"`           // bit error rate, e.g. "0.65%"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -767,6 +784,181 @@ func (x *LastHeardEntry) GetTimestamp() string {
 	return ""
 }
 
+func (x *LastHeardEntry) GetLoss() string {
+	if x != nil {
+		return x.Loss
+	}
+	return ""
+}
+
+type LookupCallsignRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Callsign      string                 `protobuf:"bytes,1,opt,name=callsign,proto3" json:"callsign,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LookupCallsignRequest) Reset() {
+	*x = LookupCallsignRequest{}
+	mi := &file_openrig_v1_hotspot_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LookupCallsignRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LookupCallsignRequest) ProtoMessage() {}
+
+func (x *LookupCallsignRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_openrig_v1_hotspot_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LookupCallsignRequest.ProtoReflect.Descriptor instead.
+func (*LookupCallsignRequest) Descriptor() ([]byte, []int) {
+	return file_openrig_v1_hotspot_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *LookupCallsignRequest) GetCallsign() string {
+	if x != nil {
+		return x.Callsign
+	}
+	return ""
+}
+
+type CallsignInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Call          string                 `protobuf:"bytes,1,opt,name=call,proto3" json:"call,omitempty"`
+	FirstName     string                 `protobuf:"bytes,2,opt,name=first_name,json=firstName,proto3" json:"first_name,omitempty"`
+	LastName      string                 `protobuf:"bytes,3,opt,name=last_name,json=lastName,proto3" json:"last_name,omitempty"`
+	City          string                 `protobuf:"bytes,4,opt,name=city,proto3" json:"city,omitempty"`
+	State         string                 `protobuf:"bytes,5,opt,name=state,proto3" json:"state,omitempty"`
+	Country       string                 `protobuf:"bytes,6,opt,name=country,proto3" json:"country,omitempty"`
+	Grid          string                 `protobuf:"bytes,7,opt,name=grid,proto3" json:"grid,omitempty"`
+	Lat           float64                `protobuf:"fixed64,8,opt,name=lat,proto3" json:"lat,omitempty"`
+	Lon           float64                `protobuf:"fixed64,9,opt,name=lon,proto3" json:"lon,omitempty"`
+	LicenseClass  string                 `protobuf:"bytes,10,opt,name=license_class,json=licenseClass,proto3" json:"license_class,omitempty"`
+	ImageUrl      string                 `protobuf:"bytes,11,opt,name=image_url,json=imageUrl,proto3" json:"image_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CallsignInfo) Reset() {
+	*x = CallsignInfo{}
+	mi := &file_openrig_v1_hotspot_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CallsignInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CallsignInfo) ProtoMessage() {}
+
+func (x *CallsignInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_openrig_v1_hotspot_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CallsignInfo.ProtoReflect.Descriptor instead.
+func (*CallsignInfo) Descriptor() ([]byte, []int) {
+	return file_openrig_v1_hotspot_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CallsignInfo) GetCall() string {
+	if x != nil {
+		return x.Call
+	}
+	return ""
+}
+
+func (x *CallsignInfo) GetFirstName() string {
+	if x != nil {
+		return x.FirstName
+	}
+	return ""
+}
+
+func (x *CallsignInfo) GetLastName() string {
+	if x != nil {
+		return x.LastName
+	}
+	return ""
+}
+
+func (x *CallsignInfo) GetCity() string {
+	if x != nil {
+		return x.City
+	}
+	return ""
+}
+
+func (x *CallsignInfo) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *CallsignInfo) GetCountry() string {
+	if x != nil {
+		return x.Country
+	}
+	return ""
+}
+
+func (x *CallsignInfo) GetGrid() string {
+	if x != nil {
+		return x.Grid
+	}
+	return ""
+}
+
+func (x *CallsignInfo) GetLat() float64 {
+	if x != nil {
+		return x.Lat
+	}
+	return 0
+}
+
+func (x *CallsignInfo) GetLon() float64 {
+	if x != nil {
+		return x.Lon
+	}
+	return 0
+}
+
+func (x *CallsignInfo) GetLicenseClass() string {
+	if x != nil {
+		return x.LicenseClass
+	}
+	return ""
+}
+
+func (x *CallsignInfo) GetImageUrl() string {
+	if x != nil {
+		return x.ImageUrl
+	}
+	return ""
+}
+
 var File_openrig_v1_hotspot_proto protoreflect.FileDescriptor
 
 const file_openrig_v1_hotspot_proto_rawDesc = "" +
@@ -787,14 +979,17 @@ const file_openrig_v1_hotspot_proto_rawDesc = "" +
 	"\n" +
 	"talkgroups\x18\a \x03(\v2\x15.openrig.v1.TalkgroupR\n" +
 	"talkgroups\x12\"\n" +
-	"\rdmr_id_suffix\x18\b \x01(\x05R\vdmrIdSuffix\"\xaf\x01\n" +
+	"\rdmr_id_suffix\x18\b \x01(\x05R\vdmrIdSuffix\"\xfd\x01\n" +
 	"\tYSFConfig\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x18\n" +
 	"\anetwork\x18\x02 \x01(\tR\anetwork\x12\x1c\n" +
 	"\treflector\x18\x03 \x01(\tR\treflector\x12\x16\n" +
 	"\x06module\x18\x04 \x01(\tR\x06module\x12\x16\n" +
 	"\x06suffix\x18\x05 \x01(\tR\x06suffix\x12 \n" +
-	"\vdescription\x18\x06 \x01(\tR\vdescription\"\xb3\x01\n" +
+	"\vdescription\x18\x06 \x01(\tR\vdescription\x12-\n" +
+	"\x12wiresx_passthrough\x18\a \x01(\bR\x11wiresxPassthrough\x12\x1d\n" +
+	"\n" +
+	"link_state\x18\b \x01(\tR\tlinkState\"\xb3\x01\n" +
 	"\x0fCrossModeConfig\x12'\n" +
 	"\x0fysf2dmr_enabled\x18\x01 \x01(\bR\x0eysf2dmrEnabled\x12+\n" +
 	"\x11ysf2dmr_talkgroup\x18\x02 \x01(\x05R\x10ysf2dmrTalkgroup\x12'\n" +
@@ -820,20 +1015,38 @@ const file_openrig_v1_hotspot_proto_rawDesc = "" +
 	"\anetwork\x18\x01 \x01(\tR\anetwork\"F\n" +
 	"\x12GetServersResponse\x12\x18\n" +
 	"\aservers\x18\x01 \x03(\tR\aservers\x12\x16\n" +
-	"\x06labels\x18\x02 \x03(\tR\x06labels\"\x8e\x01\n" +
+	"\x06labels\x18\x02 \x03(\tR\x06labels\"\xa2\x01\n" +
 	"\x0eLastHeardEntry\x12\x1a\n" +
 	"\bcallsign\x18\x01 \x01(\tR\bcallsign\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x12\n" +
 	"\x04info\x18\x03 \x01(\tR\x04info\x12\x1a\n" +
 	"\bduration\x18\x04 \x01(\tR\bduration\x12\x1c\n" +
-	"\ttimestamp\x18\x05 \x01(\tR\ttimestamp2\xfb\x02\n" +
+	"\ttimestamp\x18\x05 \x01(\tR\ttimestamp\x12\x12\n" +
+	"\x04loss\x18\x06 \x01(\tR\x04loss\"3\n" +
+	"\x15LookupCallsignRequest\x12\x1a\n" +
+	"\bcallsign\x18\x01 \x01(\tR\bcallsign\"\x9c\x02\n" +
+	"\fCallsignInfo\x12\x12\n" +
+	"\x04call\x18\x01 \x01(\tR\x04call\x12\x1d\n" +
+	"\n" +
+	"first_name\x18\x02 \x01(\tR\tfirstName\x12\x1b\n" +
+	"\tlast_name\x18\x03 \x01(\tR\blastName\x12\x12\n" +
+	"\x04city\x18\x04 \x01(\tR\x04city\x12\x14\n" +
+	"\x05state\x18\x05 \x01(\tR\x05state\x12\x18\n" +
+	"\acountry\x18\x06 \x01(\tR\acountry\x12\x12\n" +
+	"\x04grid\x18\a \x01(\tR\x04grid\x12\x10\n" +
+	"\x03lat\x18\b \x01(\x01R\x03lat\x12\x10\n" +
+	"\x03lon\x18\t \x01(\x01R\x03lon\x12#\n" +
+	"\rlicense_class\x18\n" +
+	" \x01(\tR\flicenseClass\x12\x1b\n" +
+	"\timage_url\x18\v \x01(\tR\bimageUrl2\xca\x03\n" +
 	"\x0eHotspotService\x12:\n" +
 	"\n" +
 	"GetHotspot\x12\x11.openrig.v1.Empty\x1a\x19.openrig.v1.HotspotConfig\x12L\n" +
 	"\rUpdateHotspot\x12 .openrig.v1.UpdateHotspotRequest\x1a\x19.openrig.v1.HotspotConfig\x12N\n" +
 	"\vUpdateDmrId\x12\x1e.openrig.v1.UpdateDmrIdRequest\x1a\x1f.openrig.v1.UpdateDmrIdResponse\x12K\n" +
 	"\n" +
-	"GetServers\x12\x1d.openrig.v1.GetServersRequest\x1a\x1e.openrig.v1.GetServersResponse\x12B\n" +
+	"GetServers\x12\x1d.openrig.v1.GetServersRequest\x1a\x1e.openrig.v1.GetServersResponse\x12M\n" +
+	"\x0eLookupCallsign\x12!.openrig.v1.LookupCallsignRequest\x1a\x18.openrig.v1.CallsignInfo\x12B\n" +
 	"\x0fStreamLastHeard\x12\x11.openrig.v1.Empty\x1a\x1a.openrig.v1.LastHeardEntry0\x01B\"Z openrig/gen/openrig/v1;openrigv1b\x06proto3"
 
 var (
@@ -848,21 +1061,23 @@ func file_openrig_v1_hotspot_proto_rawDescGZIP() []byte {
 	return file_openrig_v1_hotspot_proto_rawDescData
 }
 
-var file_openrig_v1_hotspot_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_openrig_v1_hotspot_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_openrig_v1_hotspot_proto_goTypes = []any{
-	(*Talkgroup)(nil),            // 0: openrig.v1.Talkgroup
-	(*DMRConfig)(nil),            // 1: openrig.v1.DMRConfig
-	(*YSFConfig)(nil),            // 2: openrig.v1.YSFConfig
-	(*CrossModeConfig)(nil),      // 3: openrig.v1.CrossModeConfig
-	(*ModemConfig)(nil),          // 4: openrig.v1.ModemConfig
-	(*HotspotConfig)(nil),        // 5: openrig.v1.HotspotConfig
-	(*UpdateHotspotRequest)(nil), // 6: openrig.v1.UpdateHotspotRequest
-	(*UpdateDmrIdRequest)(nil),   // 7: openrig.v1.UpdateDmrIdRequest
-	(*UpdateDmrIdResponse)(nil),  // 8: openrig.v1.UpdateDmrIdResponse
-	(*GetServersRequest)(nil),    // 9: openrig.v1.GetServersRequest
-	(*GetServersResponse)(nil),   // 10: openrig.v1.GetServersResponse
-	(*LastHeardEntry)(nil),       // 11: openrig.v1.LastHeardEntry
-	(*Empty)(nil),                // 12: openrig.v1.Empty
+	(*Talkgroup)(nil),             // 0: openrig.v1.Talkgroup
+	(*DMRConfig)(nil),             // 1: openrig.v1.DMRConfig
+	(*YSFConfig)(nil),             // 2: openrig.v1.YSFConfig
+	(*CrossModeConfig)(nil),       // 3: openrig.v1.CrossModeConfig
+	(*ModemConfig)(nil),           // 4: openrig.v1.ModemConfig
+	(*HotspotConfig)(nil),         // 5: openrig.v1.HotspotConfig
+	(*UpdateHotspotRequest)(nil),  // 6: openrig.v1.UpdateHotspotRequest
+	(*UpdateDmrIdRequest)(nil),    // 7: openrig.v1.UpdateDmrIdRequest
+	(*UpdateDmrIdResponse)(nil),   // 8: openrig.v1.UpdateDmrIdResponse
+	(*GetServersRequest)(nil),     // 9: openrig.v1.GetServersRequest
+	(*GetServersResponse)(nil),    // 10: openrig.v1.GetServersResponse
+	(*LastHeardEntry)(nil),        // 11: openrig.v1.LastHeardEntry
+	(*LookupCallsignRequest)(nil), // 12: openrig.v1.LookupCallsignRequest
+	(*CallsignInfo)(nil),          // 13: openrig.v1.CallsignInfo
+	(*Empty)(nil),                 // 14: openrig.v1.Empty
 }
 var file_openrig_v1_hotspot_proto_depIdxs = []int32{
 	0,  // 0: openrig.v1.DMRConfig.talkgroups:type_name -> openrig.v1.Talkgroup
@@ -871,18 +1086,20 @@ var file_openrig_v1_hotspot_proto_depIdxs = []int32{
 	3,  // 3: openrig.v1.HotspotConfig.cross_mode:type_name -> openrig.v1.CrossModeConfig
 	4,  // 4: openrig.v1.HotspotConfig.modem:type_name -> openrig.v1.ModemConfig
 	5,  // 5: openrig.v1.UpdateHotspotRequest.config:type_name -> openrig.v1.HotspotConfig
-	12, // 6: openrig.v1.HotspotService.GetHotspot:input_type -> openrig.v1.Empty
+	14, // 6: openrig.v1.HotspotService.GetHotspot:input_type -> openrig.v1.Empty
 	6,  // 7: openrig.v1.HotspotService.UpdateHotspot:input_type -> openrig.v1.UpdateHotspotRequest
 	7,  // 8: openrig.v1.HotspotService.UpdateDmrId:input_type -> openrig.v1.UpdateDmrIdRequest
 	9,  // 9: openrig.v1.HotspotService.GetServers:input_type -> openrig.v1.GetServersRequest
-	12, // 10: openrig.v1.HotspotService.StreamLastHeard:input_type -> openrig.v1.Empty
-	5,  // 11: openrig.v1.HotspotService.GetHotspot:output_type -> openrig.v1.HotspotConfig
-	5,  // 12: openrig.v1.HotspotService.UpdateHotspot:output_type -> openrig.v1.HotspotConfig
-	8,  // 13: openrig.v1.HotspotService.UpdateDmrId:output_type -> openrig.v1.UpdateDmrIdResponse
-	10, // 14: openrig.v1.HotspotService.GetServers:output_type -> openrig.v1.GetServersResponse
-	11, // 15: openrig.v1.HotspotService.StreamLastHeard:output_type -> openrig.v1.LastHeardEntry
-	11, // [11:16] is the sub-list for method output_type
-	6,  // [6:11] is the sub-list for method input_type
+	12, // 10: openrig.v1.HotspotService.LookupCallsign:input_type -> openrig.v1.LookupCallsignRequest
+	14, // 11: openrig.v1.HotspotService.StreamLastHeard:input_type -> openrig.v1.Empty
+	5,  // 12: openrig.v1.HotspotService.GetHotspot:output_type -> openrig.v1.HotspotConfig
+	5,  // 13: openrig.v1.HotspotService.UpdateHotspot:output_type -> openrig.v1.HotspotConfig
+	8,  // 14: openrig.v1.HotspotService.UpdateDmrId:output_type -> openrig.v1.UpdateDmrIdResponse
+	10, // 15: openrig.v1.HotspotService.GetServers:output_type -> openrig.v1.GetServersResponse
+	13, // 16: openrig.v1.HotspotService.LookupCallsign:output_type -> openrig.v1.CallsignInfo
+	11, // 17: openrig.v1.HotspotService.StreamLastHeard:output_type -> openrig.v1.LastHeardEntry
+	12, // [12:18] is the sub-list for method output_type
+	6,  // [6:12] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -900,7 +1117,7 @@ func file_openrig_v1_hotspot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openrig_v1_hotspot_proto_rawDesc), len(file_openrig_v1_hotspot_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

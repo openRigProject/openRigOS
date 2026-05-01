@@ -22,5 +22,8 @@ dtoverlay=disable-bt
 # Connect to Mac/Linux, get SSH without needing WiFi configured
 dtoverlay=dwc2,dr_mode=peripheral
 
+# I2C — enabled for OLED display on MMDVM hat
+dtparam=i2c_arm=on
+
 # GPU memory — headless OS, give RAM to CPU
 gpu_mem=16

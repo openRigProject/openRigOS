@@ -1,0 +1,13 @@
+[Unit]
+Description=openRig — Boot display message
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/openrig-display "Booting..."
+RemainAfterExit=no
+
+[Install]
+WantedBy=sysinit.target

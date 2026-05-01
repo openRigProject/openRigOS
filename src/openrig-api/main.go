@@ -532,12 +532,222 @@ func buildDeviceStatus(cfg map[string]any, m systemMetrics) *openrigv1.DeviceSta
 
 func buildDeviceConfig(cfg map[string]any) *openrigv1.DeviceConfig {
 	return &openrigv1.DeviceConfig{
-		Callsign:   getString(cfg, "openrig.operator.callsign", ""),
-		Hostname:   getString(cfg, "openrig.device.hostname", ""),
-		Timezone:   getString(cfg, "openrig.device.timezone", "UTC"),
-		Name:       getString(cfg, "openrig.operator.name", ""),
-		GridSquare: getString(cfg, "openrig.operator.grid_square", ""),
+		Callsign:    getString(cfg, "openrig.operator.callsign", ""),
+		Hostname:    getString(cfg, "openrig.device.hostname", ""),
+		Timezone:    getString(cfg, "openrig.device.timezone", "UTC"),
+		Name:        getString(cfg, "openrig.operator.name", ""),
+		GridSquare:  getString(cfg, "openrig.operator.grid_square", ""),
+		QrzUsername: getString(cfg, "openrig.qrz.username", ""),
+		QrzPassword: getString(cfg, "openrig.qrz.password", ""),
 	}
+}
+
+// ── QRZ XML client ────────────────────────────────────────────────────────
+
+var (
+	qrzMu         sync.Mutex
+	qrzSessionKey string
+	qrzCache      = make(map[string]*openrigv1.CallsignInfo) // callsign → result, indefinite cache
+)
+
+// gridToLatLon converts a 4- or 6-character Maidenhead grid square to the
+// centre lat/lon.  Returns (0,0,false) for invalid grids.
+func gridToLatLon(grid string) (lat, lon float64, ok bool) {
+	g := strings.ToUpper(strings.TrimSpace(grid))
+	if len(g) != 4 && len(g) != 6 {
+		return 0, 0, false
+	}
+	// Field letters
+	if g[0] < 'A' || g[0] > 'R' || g[1] < 'A' || g[1] > 'R' {
+		return 0, 0, false
+	}
+	// Square digits
+	if g[2] < '0' || g[2] > '9' || g[3] < '0' || g[3] > '9' {
+		return 0, 0, false
+	}
+	lon0 := float64(g[0]-'A')*20.0 - 180.0
+	lat0 := float64(g[1]-'A')*10.0 - 90.0
+	lon1 := lon0 + float64(g[2]-'0')*2.0
+	lat1 := lat0 + float64(g[3]-'0')*1.0
+
+	if len(g) == 6 {
+		if g[4] < 'A' || g[4] > 'X' || g[5] < 'A' || g[5] > 'X' {
+			return 0, 0, false
+		}
+		lonSub := float64(g[4]-'A') * (2.0 / 24.0)
+		latSub := float64(g[5]-'A') * (1.0 / 24.0)
+		return lat1 + latSub + (1.0 / 48.0), lon1 + lonSub + (1.0 / 24.0), true
+	}
+	return lat1 + 0.5, lon1 + 1.0, true
+}
+
+// qrzXMLTag extracts the text content of a single XML tag by name.
+func qrzXMLTag(xml, name string) string {
+	start := strings.Index(xml, "<"+name+">")
+	if start < 0 {
+		return ""
+	}
+	start += len(name) + 2
+	end := strings.Index(xml[start:], "</"+name+">")
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(xml[start : start+end])
+}
+
+// devQRZStub returns placeholder callsign data for dev mode when QRZ credentials are absent.
+var devQRZStub = map[string]*openrigv1.CallsignInfo{
+	"KC1YGY": {
+		Call: "KC1YGY", FirstName: "James", LastName: "", City: "Cambridge",
+		State: "MA", Country: "USA", Grid: "FN42in",
+		Lat: 42.373, Lon: -71.109, LicenseClass: "Technician",
+	},
+}
+
+// qrzLookup fetches callsign info from QRZ.com XML API.
+// Results are cached indefinitely for the lifetime of the process.
+func qrzLookup(callsign string) (*openrigv1.CallsignInfo, error) {
+	call := strings.ToUpper(strings.TrimSpace(callsign))
+	// If callsign contains '/', use the longest segment (e.g. W6/KC1YGY → KC1YGY, KC1YGY/P → KC1YGY)
+	if strings.Contains(call, "/") {
+		longest := ""
+		for _, p := range strings.Split(call, "/") {
+			if len(p) >= len(longest) {
+				longest = p
+			}
+		}
+		call = longest
+	}
+	// Strip SSID suffix after '-' (e.g. KC1YGY-9 → KC1YGY)
+	if idx := strings.Index(call, "-"); idx >= 0 {
+		call = call[:idx]
+	}
+
+	qrzMu.Lock()
+	if cached, ok := qrzCache[call]; ok {
+		qrzMu.Unlock()
+		return cached, nil
+	}
+	qrzMu.Unlock()
+
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, fmt.Errorf("cannot read config")
+	}
+	username := getString(cfg, "openrig.qrz.username", "")
+	password := getString(cfg, "openrig.qrz.password", "")
+	if username == "" || password == "" {
+		if devMode {
+			if stub, ok := devQRZStub[call]; ok {
+				return stub, nil
+			}
+		}
+		return nil, fmt.Errorf("QRZ credentials not configured")
+	}
+
+	info, err := qrzDoLookup(call, username, password)
+	if err != nil {
+		if devMode {
+			if stub, ok := devQRZStub[call]; ok {
+				log.Printf("[dev] QRZ lookup failed (%v), using stub for %s", err, call)
+				return stub, nil
+			}
+		}
+		return nil, err
+	}
+
+	qrzMu.Lock()
+	qrzCache[call] = info
+	qrzMu.Unlock()
+	return info, nil
+}
+
+func qrzEnsureSession(username, password string) error {
+	if qrzSessionKey != "" {
+		return nil
+	}
+	base := "https://xmldata.qrz.com/xml/current/"
+	url := base + "?username=" + strings.ReplaceAll(username, " ", "+") +
+		";password=" + strings.ReplaceAll(password, " ", "+") +
+		";agent=openRigOS-0.1"
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	key := qrzXMLTag(string(body), "Key")
+	if key == "" {
+		msg := qrzXMLTag(string(body), "Error")
+		if msg == "" {
+			msg = "authentication failed"
+		}
+		return fmt.Errorf("QRZ: %s", msg)
+	}
+	qrzSessionKey = key
+	return nil
+}
+
+func qrzDoLookup(call, username, password string) (*openrigv1.CallsignInfo, error) {
+	qrzMu.Lock()
+	if err := qrzEnsureSession(username, password); err != nil {
+		qrzMu.Unlock()
+		return nil, err
+	}
+	sessionKey := qrzSessionKey
+	qrzMu.Unlock()
+
+	base := "https://xmldata.qrz.com/xml/current/"
+	url := base + "?s=" + sessionKey + ";callsign=" + call
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	xml := string(body)
+
+	// Session expired — clear and retry once
+	if errMsg := qrzXMLTag(xml, "Error"); errMsg != "" {
+		if strings.Contains(errMsg, "Session Timeout") || strings.Contains(errMsg, "Invalid session") {
+			qrzMu.Lock()
+			qrzSessionKey = ""
+			qrzMu.Unlock()
+			return qrzDoLookup(call, username, password)
+		}
+		return nil, fmt.Errorf("QRZ: %s", errMsg)
+	}
+
+	if qrzXMLTag(xml, "call") == "" {
+		return nil, fmt.Errorf("callsign not found")
+	}
+
+	grid := qrzXMLTag(xml, "grid")
+	var lat, lon float64
+	if latStr := qrzXMLTag(xml, "lat"); latStr != "" {
+		fmt.Sscanf(latStr, "%f", &lat)
+	} else if grid != "" {
+		lat, lon, _ = gridToLatLon(grid)
+	}
+	if lonStr := qrzXMLTag(xml, "lon"); lonStr != "" {
+		fmt.Sscanf(lonStr, "%f", &lon)
+	}
+
+	return &openrigv1.CallsignInfo{
+		Call:         qrzXMLTag(xml, "call"),
+		FirstName:    qrzXMLTag(xml, "fname"),
+		LastName:     qrzXMLTag(xml, "name"),
+		City:         qrzXMLTag(xml, "addr2"),
+		State:        qrzXMLTag(xml, "state"),
+		Country:      qrzXMLTag(xml, "country"),
+		Grid:         grid,
+		Lat:          lat,
+		Lon:          lon,
+		LicenseClass: qrzXMLTag(xml, "class"),
+		ImageUrl:     qrzXMLTag(xml, "image"),
+	}, nil
 }
 
 func buildHotspotConfig(cfg map[string]any) *openrigv1.HotspotConfig {
@@ -577,14 +787,21 @@ func buildHotspotConfig(cfg map[string]any) *openrigv1.HotspotConfig {
 			Password:   getString(cfg, "openrig.hotspot.dmr.password", ""),
 			Talkgroups: tgs,
 		},
-		Ysf: &openrigv1.YSFConfig{
-			Enabled:     getBool(cfg, "openrig.hotspot.ysf.enabled"),
-			Network:     getString(cfg, "openrig.hotspot.ysf.network", "ysf"),
-			Reflector:   getString(cfg, "openrig.hotspot.ysf.reflector", "AMERICA"),
-			Module:      getString(cfg, "openrig.hotspot.ysf.module", ""),
-			Suffix:      getString(cfg, "openrig.hotspot.ysf.suffix", ""),
-			Description: getString(cfg, "openrig.hotspot.ysf.description", ""),
-		},
+		Ysf: func() *openrigv1.YSFConfig {
+			ysfLinkMu.RLock()
+			ls := ysfLinkState
+			ysfLinkMu.RUnlock()
+			return &openrigv1.YSFConfig{
+				Enabled:           getBool(cfg, "openrig.hotspot.ysf.enabled"),
+				Network:           getString(cfg, "openrig.hotspot.ysf.network", "ysf"),
+				Reflector:         getString(cfg, "openrig.hotspot.ysf.reflector", "AMERICA"),
+				Module:            getString(cfg, "openrig.hotspot.ysf.module", ""),
+				Suffix:            getString(cfg, "openrig.hotspot.ysf.suffix", ""),
+				Description:       getString(cfg, "openrig.hotspot.ysf.description", ""),
+				WiresxPassthrough: getBool(cfg, "openrig.hotspot.ysf.wiresx_passthrough"),
+				LinkState:         ls,
+			}
+		}(),
 		CrossMode: &openrigv1.CrossModeConfig{
 			Ysf2DmrEnabled:   getBool(cfg, "openrig.hotspot.cross_mode.ysf2dmr_enabled"),
 			Ysf2DmrTalkgroup: int32(getFloat(cfg, "openrig.hotspot.cross_mode.ysf2dmr_talkgroup")),
@@ -672,64 +889,144 @@ func buildRigList(cfg map[string]any) *openrigv1.RigList {
 	return &openrigv1.RigList{Rigs: rigs}
 }
 
-// ── Last-heard parser ────────────────────────────────────────────────────
+// ── Last-heard via MQTT ───────────────────────────────────────────────────
 
 var (
-	reMMDVMEnd = regexp.MustCompile(
-		`^M: (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.\d+ ` +
-			`(DMR|YSF).*end of.*transmission from ([A-Z0-9/]+) to (?:TG )?(\S+).*?(\d+(?:\.\d+)?) seconds`)
+	lastHeardMu      sync.RWMutex
+	lastHeardEntries []*openrigv1.LastHeardEntry
+
+	pendingMu sync.Mutex
+	pendingTx = map[string]*openrigv1.LastHeardEntry{} // keyed by mode, points into lastHeardEntries
+
+	ysfLinkMu    sync.RWMutex
+	ysfLinkState = "unlinked" // "linking"|"linked"|"unlinked"
 )
 
-func parseMMDVMLastHeard() []*openrigv1.LastHeardEntry {
-	matches, err := filepath.Glob("/var/log/mmdvmhost/MMDVM-*.log")
-	if err != nil || len(matches) == 0 {
-		return nil
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(matches)))
-	logFile := matches[0]
+// mqttLastHeard returns a snapshot of the in-memory last-heard list.
+func mqttLastHeard() []*openrigv1.LastHeardEntry {
+	lastHeardMu.RLock()
+	defer lastHeardMu.RUnlock()
+	out := make([]*openrigv1.LastHeardEntry, len(lastHeardEntries))
+	copy(out, lastHeardEntries)
+	return out
+}
 
-	data, err := os.ReadFile(logFile)
-	if err != nil {
-		return nil
+// processMQTTPayload handles one JSON message published to any MQTT topic.
+func processMQTTPayload(payload []byte) {
+	var msg map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		return
 	}
-
-	lines := strings.Split(string(data), "\n")
-	start := len(lines) - 500
-	if start < 0 {
-		start = 0
-	}
-	lines = lines[start:]
-
-	var entries []*openrigv1.LastHeardEntry
-	for i := len(lines) - 1; i >= 0 && len(entries) < 10; i-- {
-		m := reMMDVMEnd.FindStringSubmatch(lines[i])
-		if m == nil {
+	for mode, raw := range msg {
+		if mode == "MMDVM" {
 			continue
 		}
-		ts, err := time.Parse("2006-01-02 15:04:05", m[1])
-		if err != nil {
+		if mode == "link" {
+			var lev struct {
+				Action string `json:"action"`
+			}
+			if err := json.Unmarshal(raw, &lev); err == nil && lev.Action != "" {
+				state := lev.Action // "linking"|"linked"|"unlinked"
+				ysfLinkMu.Lock()
+				ysfLinkState = state
+				ysfLinkMu.Unlock()
+			}
 			continue
 		}
-		secs, _ := strconv.ParseFloat(m[5], 64)
-		entries = append(entries, &openrigv1.LastHeardEntry{
-			Callsign:  m[3],
-			Mode:      m[2],
-			Info:      m[4],
-			Duration:  fmt.Sprintf("%.0fs", secs),
-			Timestamp: ts.Format(time.RFC3339),
-		})
+		var ev struct {
+			Action    string  `json:"action"`
+			SourceCS  string  `json:"source_cs"`
+			Reflector string  `json:"reflector"`
+			TG        int     `json:"tg"`
+			Duration  float64 `json:"duration"`
+			BER       float64 `json:"ber"`
+		}
+		if err := json.Unmarshal(raw, &ev); err != nil {
+			continue
+		}
+		switch ev.Action {
+		case "start":
+			if ev.SourceCS == "" {
+				continue
+			}
+			info := strings.TrimSpace(ev.Reflector)
+			if info == "" && ev.TG != 0 {
+				info = strconv.Itoa(ev.TG)
+			}
+			entry := &openrigv1.LastHeardEntry{
+				Callsign:  ev.SourceCS,
+				Mode:      mode,
+				Info:      info,
+				Duration:  "",
+				Timestamp: time.Now().Format(time.RFC3339),
+			}
+			lastHeardMu.Lock()
+			lastHeardEntries = append([]*openrigv1.LastHeardEntry{entry}, lastHeardEntries...)
+			if len(lastHeardEntries) > 20 {
+				lastHeardEntries = lastHeardEntries[:20]
+			}
+			lastHeardMu.Unlock()
+			pendingMu.Lock()
+			pendingTx[mode] = entry
+			pendingMu.Unlock()
+
+		case "end", "lost":
+			pendingMu.Lock()
+			entry := pendingTx[mode]
+			delete(pendingTx, mode)
+			pendingMu.Unlock()
+
+			if entry == nil {
+				continue
+			}
+			// Update the existing entry in-place so streaming clients pick up the change.
+			lastHeardMu.Lock()
+			entry.Duration = fmt.Sprintf("%.0fs", ev.Duration)
+			entry.Loss = fmt.Sprintf("%.2f%%", ev.BER)
+			lastHeardMu.Unlock()
+		}
 	}
-	return entries
+}
+
+// startMQTTListener subscribes to mmdvm-host/json via mosquitto_sub subprocess.
+// Reconnects automatically if the process exits.
+func startMQTTListener() {
+	go func() {
+		for {
+			cmd := exec.Command("mosquitto_sub", "-h", "localhost",
+				"-t", "#", "-v")
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				time.Sleep(10 * time.Second)
+				continue
+			}
+			if err := cmd.Start(); err != nil {
+				time.Sleep(10 * time.Second)
+				continue
+			}
+			scanner := bufio.NewScanner(stdout)
+			for scanner.Scan() {
+				line := scanner.Text()
+				// mosquitto_sub -v format: "<topic> <payload>"
+				idx := strings.Index(line, " ")
+				if idx < 0 {
+					continue
+				}
+				processMQTTPayload([]byte(line[idx+1:]))
+			}
+			cmd.Wait()
+			time.Sleep(5 * time.Second)
+		}
+	}()
 }
 
 func devModeLastHeard() []*openrigv1.LastHeardEntry {
 	now := time.Now()
 	return []*openrigv1.LastHeardEntry{
-		{Callsign: "W1ABC", Mode: "DMR", Info: "3100", Duration: "13s", Timestamp: now.Add(-2 * time.Minute).Format(time.RFC3339)},
-		{Callsign: "K5XYZ", Mode: "YSF", Info: "AMERICA", Duration: "8s", Timestamp: now.Add(-5 * time.Minute).Format(time.RFC3339)},
-		{Callsign: "N3DEF", Mode: "DMR", Info: "91", Duration: "22s", Timestamp: now.Add(-11 * time.Minute).Format(time.RFC3339)},
-		{Callsign: "VE3RST", Mode: "DMR", Info: "302", Duration: "5s", Timestamp: now.Add(-18 * time.Minute).Format(time.RFC3339)},
-		{Callsign: "JA1QRS", Mode: "YSF", Info: "FCS001-A", Duration: "15s", Timestamp: now.Add(-30 * time.Minute).Format(time.RFC3339)},
+		{Callsign: "KC9SIO", Mode: "YSF", Info: "US-KCWIDE", Duration: "", Timestamp: now.Add(-30 * time.Second).Format(time.RFC3339)},
+		{Callsign: "K9NOR", Mode: "YSF", Info: "US-KCWIDE", Duration: "6s", Timestamp: now.Add(-2 * time.Minute).Format(time.RFC3339)},
+		{Callsign: "KC1YGY", Mode: "DMR", Info: "3100", Duration: "13s", Timestamp: now.Add(-5 * time.Minute).Format(time.RFC3339)},
+		{Callsign: "KC1YGY", Mode: "YSF", Info: "US-KCWIDE", Duration: "8s", Timestamp: now.Add(-11 * time.Minute).Format(time.RFC3339)},
 	}
 }
 
@@ -775,38 +1072,60 @@ var hardcodedServers = map[string][]string{
 	"systemx": {"xlx307.opendigital.radio"},
 }
 
-// dvrefReflector holds the full connection details for a YSF reflector from dvref.com.
-type dvrefReflector struct {
-	Name        string `json:"name"`
-	Designator  string `json:"designator"`  // 5-digit numeric ID, e.g. "00029"
-	Description string `json:"description"` // short description, e.g. "JONS YSF ROOM"
-	DNS         string `json:"dns"`         // preferred hostname for connection
-	IPv4        string `json:"ipv4"`        // static IP fallback
-	Port        int    `json:"port"`        // UDP port, usually 42000
-	Country     string `json:"country"`     // ISO 3166-1 alpha-2
-}
-
-// host returns the best available address for connecting: DNS preferred, then IPv4.
-func (r dvrefReflector) host() string {
-	if r.DNS != "" {
-		return r.DNS
-	}
-	return r.IPv4
-}
-
 var (
-	srvCacheMu   sync.Mutex
-	srvCacheVal  = make(map[string][]string)
-	srvRefCache  = make(map[string][]dvrefReflector) // full reflector data for YSF
-	srvCacheExp  = make(map[string]time.Time)
-	srvDiskCache string // set in main(); empty disables disk persistence
-	ysfHostsPath string // set in main(); path to write YSFHosts.txt
+	srvCacheMu      sync.Mutex
+	srvCacheVal     = make(map[string][]string)
+	srvCacheExp     = make(map[string]time.Time)
+	srvDiskCache    string // set in main(); empty disables disk persistence
+	ysfHostsJsonPath string // path to YSFHosts.json downloaded by openrig-hosts-update.timer
 )
 
+type ysfHostsFile struct {
+	Reflectors []struct {
+		Designator  string  `json:"designator"`
+		Country     string  `json:"country"`
+		Name        string  `json:"name"`
+		UseXXPrefix bool    `json:"use_xx_prefix"`
+		Description *string `json:"description"`
+	} `json:"reflectors"`
+}
+
+// readYsfHosts reads YSFHosts.json and returns sorted display names matching
+// the format YSFGateway uses: "{country}-{name}" or "XX-{name}".
+// Falls back to the hardcoded list if the file is missing or unparseable.
+func readYsfHosts() []string {
+	if ysfHostsJsonPath == "" {
+		return hardcodedServers["ysf"]
+	}
+	data, err := os.ReadFile(ysfHostsJsonPath)
+	if err != nil {
+		return hardcodedServers["ysf"]
+	}
+	var hosts ysfHostsFile
+	if err := json.Unmarshal(data, &hosts); err != nil || len(hosts.Reflectors) == 0 {
+		return hardcodedServers["ysf"]
+	}
+	seen := make(map[string]bool, len(hosts.Reflectors))
+	names := make([]string, 0, len(hosts.Reflectors))
+	for _, r := range hosts.Reflectors {
+		var display string
+		if r.UseXXPrefix {
+			display = "XX-" + r.Name
+		} else {
+			display = r.Country + "-" + r.Name
+		}
+		if !seen[display] {
+			seen[display] = true
+			names = append(names, display)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 type diskCacheEntry struct {
-	Servers    []string         `json:"servers"`
-	Reflectors []dvrefReflector `json:"reflectors,omitempty"` // full data for YSF
-	ExpiresAt  time.Time        `json:"expires_at"`
+	Servers   []string  `json:"servers"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 func loadDiskCache() {
@@ -834,9 +1153,6 @@ func loadDiskCache() {
 		if entry.ExpiresAt.After(now) {
 			srvCacheVal[network] = entry.Servers
 			srvCacheExp[network] = entry.ExpiresAt
-			if len(entry.Reflectors) > 0 {
-				srvRefCache[network] = entry.Reflectors
-			}
 			loaded++
 		}
 	}
@@ -844,8 +1160,6 @@ func loadDiskCache() {
 	if devMode {
 		log.Printf("[cache] loaded %d network(s) from disk cache %s", loaded, srvDiskCache)
 	}
-	// Regenerate hosts files from the cached reflector data.
-	go writeYsfHostsFile()
 }
 
 func saveDiskCache() {
@@ -856,9 +1170,8 @@ func saveDiskCache() {
 	dc := make(map[string]diskCacheEntry, len(srvCacheVal))
 	for network, servers := range srvCacheVal {
 		dc[network] = diskCacheEntry{
-			Servers:    servers,
-			Reflectors: srvRefCache[network],
-			ExpiresAt:  srvCacheExp[network],
+			Servers:   servers,
+			ExpiresAt: srvCacheExp[network],
 		}
 	}
 	srvCacheMu.Unlock()
@@ -882,7 +1195,6 @@ func saveDiskCache() {
 	if devMode {
 		log.Printf("[cache] saved %d network(s) to disk cache %s", len(dc), srvDiskCache)
 	}
-	writeYsfHostsFile()
 }
 
 func getCachedServers(network string) ([]string, bool) {
@@ -903,191 +1215,6 @@ func setCachedServers(network string, servers []string) {
 	go saveDiskCache()
 }
 
-// setCachedReflectors stores full dvref reflector data and updates the name list.
-func setCachedReflectors(network string, reflectors []dvrefReflector) {
-	names := make([]string, len(reflectors))
-	for i, r := range reflectors {
-		names[i] = r.Name
-	}
-	srvCacheMu.Lock()
-	srvCacheVal[network] = names
-	srvRefCache[network] = reflectors
-	srvCacheExp[network] = time.Now().Add(2 * time.Hour)
-	srvCacheMu.Unlock()
-	go saveDiskCache()
-}
-
-// writeYsfHostsFile generates YSFHosts.txt from the cached dvref reflector list.
-// YSFGateway reads this file to resolve reflector names (e.g. "AMERICA") to
-// an IP/hostname and port.
-//
-// Format (semicolon-delimited, one entry per line):
-//
-//	designator;name;description;host;port;000;
-//
-// e.g.  99714;US-WB0VTM ROOM;JONS YSF ROOM;50.40.173.239;42006;000;
-func writeYsfHostsFile() {
-	if ysfHostsPath == "" {
-		return
-	}
-	srvCacheMu.Lock()
-	reflectors := srvRefCache["ysf"]
-	srvCacheMu.Unlock()
-
-	if len(reflectors) == 0 {
-		if devMode {
-			log.Printf("[hosts] no YSF reflector data cached yet, skipping YSFHosts.txt write")
-		}
-		return
-	}
-
-	sorted := make([]dvrefReflector, len(reflectors))
-	copy(sorted, reflectors)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Designator < sorted[j].Designator
-	})
-
-	var sb strings.Builder
-	written := 0
-	for _, r := range sorted {
-		h := r.host()
-		if h == "" {
-			continue // skip reflectors with no address
-		}
-		port := r.Port
-		if port == 0 {
-			port = 42000
-		}
-		fmt.Fprintf(&sb, "%s;%s;%s;%s;%d;000;\n",
-			r.Designator, r.Name, r.Description, h, port)
-		written++
-	}
-
-	if err := os.MkdirAll(filepath.Dir(ysfHostsPath), 0755); err != nil {
-		if devMode {
-			log.Printf("[hosts] failed to create dir for %s: %v", ysfHostsPath, err)
-		}
-		return
-	}
-	if err := os.WriteFile(ysfHostsPath, []byte(sb.String()), 0644); err != nil {
-		if devMode {
-			log.Printf("[hosts] failed to write %s: %v", ysfHostsPath, err)
-		}
-		return
-	}
-	if devMode {
-		log.Printf("[hosts] wrote %d reflectors to %s", written, ysfHostsPath)
-	}
-}
-
-// fetchDvrefReflectors fetches full YSF reflector records from dvref.com.
-// Requires DVREF_API_TOKEN env var; returns nil on failure so the caller can
-// fall back to the hardcoded name list.
-// FCS rooms are not available via dvref.com.
-func fetchDvrefReflectors() []dvrefReflector {
-	token := os.Getenv("DVREF_API_TOKEN")
-	if token == "" {
-		if devMode {
-			log.Printf("[dvref] DVREF_API_TOKEN not set, skipping dvref.com fetch")
-		}
-		return nil
-	}
-
-	if devMode {
-		log.Printf("[dvref] fetching YSF reflectors from dvref.com ...")
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", "https://dvref.com/api/v2/ysf/reflectors/", nil)
-	if err != nil {
-		if devMode {
-			log.Printf("[dvref] failed to build request: %v", err)
-		}
-		return nil
-	}
-	req.Header.Set("Authorization", "Token "+token)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		if devMode {
-			log.Printf("[dvref] request failed: %v", err)
-		}
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		if devMode {
-			log.Printf("[dvref] unexpected status %d", resp.StatusCode)
-		}
-		return nil
-	}
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		if devMode {
-			log.Printf("[dvref] failed to read response body: %v", err)
-		}
-		return nil
-	}
-
-	var envelope struct {
-		Data struct {
-			Reflectors []struct {
-				Name        string `json:"name"`
-				Designator  string `json:"designator"`
-				Description string `json:"description"`
-				DNS         string `json:"dns"`
-				IPv4        string `json:"ipv4"`
-				Port        int    `json:"port"`
-				Country     string `json:"country"`
-			} `json:"reflectors"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(bodyBytes, &envelope); err != nil {
-		if devMode {
-			log.Printf("[dvref] JSON decode error: %v", err)
-		}
-		return nil
-	}
-
-	seen := make(map[string]bool)
-	var reflectors []dvrefReflector
-	for _, r := range envelope.Data.Reflectors {
-		if r.Name == "" || seen[r.Name] {
-			continue
-		}
-		seen[r.Name] = true
-		port := r.Port
-		if port == 0 {
-			port = 42000
-		}
-		reflectors = append(reflectors, dvrefReflector{
-			Name:        r.Name,
-			Designator:  r.Designator,
-			Description: r.Description,
-			DNS:         r.DNS,
-			IPv4:        r.IPv4,
-			Port:        port,
-			Country:     r.Country,
-		})
-	}
-
-	if len(reflectors) == 0 {
-		if devMode {
-			log.Printf("[dvref] response contained no reflectors")
-		}
-		return nil
-	}
-
-	sort.Slice(reflectors, func(i, j int) bool {
-		return reflectors[i].Name < reflectors[j].Name
-	})
-
-	if devMode {
-		log.Printf("[dvref] loaded %d YSF reflectors from dvref.com", len(reflectors))
-	}
-	return reflectors
-}
 
 func fetchBrandmeisterServers() []string {
 	fallback := hardcodedServers["brandmeister"]
@@ -1138,18 +1265,9 @@ func getServersForNetwork(network string) []string {
 			setCachedServers(network, live)
 			done <- live
 		case "ysf":
-			if reflectors := fetchDvrefReflectors(); reflectors != nil {
-				setCachedReflectors("ysf", reflectors)
-				names := make([]string, len(reflectors))
-				for i, r := range reflectors {
-					names[i] = r.Name
-				}
-				done <- names
-			} else {
-				fallback := hardcodedServers["ysf"]
-				setCachedServers("ysf", fallback)
-				done <- fallback
-			}
+			names := readYsfHosts()
+			setCachedServers("ysf", names)
+			done <- names
 		case "fcs":
 			fallback := hardcodedServers["fcs"]
 			setCachedServers("fcs", fallback)
@@ -1263,6 +1381,14 @@ func (s *deviceServer) UpdateConfig(_ context.Context, req *connect.Request[open
 	if c.GridSquare != "" {
 		nested(cfg, "openrig.operator.grid_square", strings.ToUpper(c.GridSquare))
 	}
+	// QRZ credentials — stored even when empty so they can be cleared
+	nested(cfg, "openrig.qrz.username", c.QrzUsername)
+	nested(cfg, "openrig.qrz.password", c.QrzPassword)
+	// Invalidate QRZ session and cache so updated credentials take effect immediately
+	qrzMu.Lock()
+	qrzSessionKey = ""
+	qrzCache = make(map[string]*openrigv1.CallsignInfo)
+	qrzMu.Unlock()
 
 	if err := writeConfig(cfg); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write config"))
@@ -1366,6 +1492,7 @@ func (s *hotspotServer) UpdateHotspot(_ context.Context, req *connect.Request[op
 		nested(cfg, "openrig.hotspot.ysf.module", hc.Ysf.Module)
 		nested(cfg, "openrig.hotspot.ysf.suffix", hc.Ysf.Suffix)
 		nested(cfg, "openrig.hotspot.ysf.description", hc.Ysf.Description)
+		nested(cfg, "openrig.hotspot.ysf.wiresx_passthrough", hc.Ysf.WiresxPassthrough)
 	}
 
 	if hc.CrossMode != nil {
@@ -1460,34 +1587,17 @@ func (s *hotspotServer) GetServers(_ context.Context, req *connect.Request[openr
 	network := req.Msg.Network
 	servers := getServersForNetwork(network)
 
-	// For YSF, build display labels that include the designator when available.
-	var labels []string
-	if network == "ysf" {
-		srvCacheMu.Lock()
-		reflectors := srvRefCache["ysf"]
-		srvCacheMu.Unlock()
-
-		if len(reflectors) > 0 {
-			// Build a name→designator lookup.
-			designators := make(map[string]string, len(reflectors))
-			for _, r := range reflectors {
-				designators[r.Name] = r.Designator
-			}
-			labels = make([]string, len(servers))
-			for i, name := range servers {
-				if d := designators[name]; d != "" {
-					labels[i] = name + " (" + d + ")"
-				} else {
-					labels[i] = name
-				}
-			}
-		}
-	}
-
 	return connect.NewResponse(&openrigv1.GetServersResponse{
 		Servers: servers,
-		Labels:  labels,
 	}), nil
+}
+
+func (s *hotspotServer) LookupCallsign(_ context.Context, req *connect.Request[openrigv1.LookupCallsignRequest]) (*connect.Response[openrigv1.CallsignInfo], error) {
+	info, err := qrzLookup(req.Msg.Callsign)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable, err)
+	}
+	return connect.NewResponse(info), nil
 }
 
 func (s *hotspotServer) StreamLastHeard(ctx context.Context, _ *connect.Request[openrigv1.Empty], stream *connect.ServerStream[openrigv1.LastHeardEntry]) error {
@@ -1503,15 +1613,14 @@ func (s *hotspotServer) StreamLastHeard(ctx context.Context, _ *connect.Request[
 		return nil
 	}
 
-	// Track already-sent entries by timestamp to avoid duplicates
+	// Send any entries already in the in-memory list, then stream new ones.
 	sent := make(map[string]bool)
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
-	// Send initial batch
-	entries := parseMMDVMLastHeard()
-	for _, e := range entries {
-		sent[e.Timestamp+e.Callsign] = true
+	for _, e := range mqttLastHeard() {
+		key := e.Timestamp + e.Callsign + e.Duration + e.Loss
+		sent[key] = true
 		if err := stream.Send(e); err != nil {
 			return err
 		}
@@ -1522,9 +1631,10 @@ func (s *hotspotServer) StreamLastHeard(ctx context.Context, _ *connect.Request[
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			entries := parseMMDVMLastHeard()
-			for _, e := range entries {
-				key := e.Timestamp + e.Callsign
+			for _, e := range mqttLastHeard() {
+				// Key includes Duration: when an in-progress entry gets its
+				// duration filled in, the key changes and the update is re-sent.
+				key := e.Timestamp + e.Callsign + e.Duration + e.Loss
 				if sent[key] {
 					continue
 				}
@@ -1710,8 +1820,33 @@ func main() {
 
 	if devMode {
 		srvDiskCache = "/tmp/openrig-server-cache.json"
-		ysfHostsPath = "/tmp/YSFHosts.txt"
+		ysfHostsJsonPath = "/tmp/YSFHosts.json"
 		configPath = "./openrig.json"
+		// Download YSFHosts.json if not already cached locally
+		// Download YSFHosts.json if missing or contains an error page (non-JSON)
+		needsDownload := true
+		if data, err := os.ReadFile(ysfHostsJsonPath); err == nil {
+			if len(data) > 0 && data[0] == '{' {
+				needsDownload = false // looks like valid JSON
+			} else {
+				log.Printf("[dev] YSFHosts.json appears invalid (%d bytes), re-downloading...", len(data))
+				os.Remove(ysfHostsJsonPath)
+			}
+		}
+		if needsDownload {
+			log.Printf("[dev] Downloading YSFHosts.json to %s ...", ysfHostsJsonPath)
+			req, _ := http.NewRequest("GET", "https://hostfiles.refcheck.radio/YSFHosts.json", nil)
+			req.Header.Set("User-Agent", "openRig - KC1YGY")
+			if resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req); err == nil {
+				defer resp.Body.Close()
+				if data, err := io.ReadAll(resp.Body); err == nil {
+					os.WriteFile(ysfHostsJsonPath, data, 0644)
+					log.Printf("[dev] YSFHosts.json downloaded (%d bytes)", len(data))
+				}
+			} else {
+				log.Printf("[dev] YSFHosts.json download failed: %v — using hardcoded fallback", err)
+			}
+		}
 		wpaConfPath = "./wpa_supplicant-dev.conf"
 		if _, err := os.Stat(configPath); os.IsNotExist(err) {
 			seed := []byte(`{"openrig":{"device":{"provisioned":true,"type":"hotspot","hostname":"dev-hotspot","timezone":"UTC"},"operator":{"callsign":"N0CALL","name":"Dev User","grid_square":"FN31","country":"US"},"management":{"api_enabled":true,"mdns_enabled":true},"hotspot":{"dmr":{"enabled":true,"dmr_id":1234567,"colorcode":1,"network":"brandmeister","server":"us-west.brandmeister.network","password":"","talkgroups":[{"tg":91,"slot":1,"name":"Worldwide"},{"tg":3100,"slot":2,"name":"USA"}]},"ysf":{"enabled":false,"network":"ysf","reflector":"AMERICA","module":"","suffix":"-OR","description":"Dev hotspot"},"cross_mode":{"ysf2dmr_enabled":false,"ysf2dmr_talkgroup":91,"dmr2ysf_enabled":false,"dmr2ysf_room":""},"rf_frequency":438.8},"network":{"wifi":{"country":"US","networks":[{"ssid":"HomeNetwork","security":"auto","priority":10}]}}}}`)
@@ -1723,10 +1858,17 @@ func main() {
 			log.Printf("[dev] Dev mode enabled — config: %s, addr: %s", configPath, listenAddr)
 	} else {
 		srvDiskCache = "/var/cache/openrig/server-cache.json"
-		ysfHostsPath = "/usr/local/etc/YSFHosts.txt"
+		ysfHostsJsonPath = "/usr/local/etc/YSFHosts.json"
+		startMQTTListener()
 	}
 
-	loadDiskCache() // also calls writeYsfHostsFile() if cached reflectors are available
+	loadDiskCache()
+	// Always re-read YSF hosts from disk on startup so the dropdown reflects
+	// the latest YSFHosts.json downloaded by openrig-hosts-update.timer.
+	srvCacheMu.Lock()
+	delete(srvCacheVal, "ysf")
+	delete(srvCacheExp, "ysf")
+	srvCacheMu.Unlock()
 
 	mux := http.NewServeMux()
 

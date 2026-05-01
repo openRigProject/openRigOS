@@ -1,0 +1,9 @@
+[Unit]
+Description=openRig — Update YSF/FCS host lists
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/openrig/update-hosts.sh
+ExecStartPost=-/bin/systemctl try-restart openrig-api.service

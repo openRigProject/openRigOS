@@ -11,29 +11,29 @@ mkdir -p "${STAGING_DIR}"
 rm -rf "${SRC_BASE}"
 mkdir -p "${SRC_BASE}"
 
-# Cross-compile for the target architecture
+# Select cross-compiler for target architecture
 case "${DEBIAN_ARCH}" in
     arm64)
-        export CXX=aarch64-linux-gnu-g++
-        export CC=aarch64-linux-gnu-gcc
+        TARGET_CXX=aarch64-linux-gnu-g++
+        TARGET_CC=aarch64-linux-gnu-gcc
         ;;
     armhf)
-        export CXX=arm-linux-gnueabihf-g++
-        export CC=arm-linux-gnueabihf-gcc
+        TARGET_CXX=arm-linux-gnueabihf-g++
+        TARGET_CC=arm-linux-gnueabihf-gcc
         ;;
-    amd64)
-        # Native build — no cross-compiler needed
-        ;;
-    *)
-        echo "[01-gateways] WARNING: unknown arch ${DEBIAN_ARCH}, attempting native build"
+    amd64|*)
+        TARGET_CXX=g++
+        TARGET_CC=gcc
         ;;
 esac
+
+echo "[01-gateways] Using CXX=${TARGET_CXX}"
 
 # ── DMRGateway ────────────────────────────────────────────────────────────
 echo "[01-gateways] Building DMRGateway (ARCH=${DEBIAN_ARCH})..."
 git clone --depth=1 https://github.com/g4klx/DMRGateway.git "${SRC_BASE}/DMRGateway"
 cd "${SRC_BASE}/DMRGateway"
-make -j"$(nproc)"
+make CXX="${TARGET_CXX}" CC="${TARGET_CC}" -j"$(nproc)"
 cp DMRGateway "${STAGING_DIR}/DMRGateway"
 echo "[01-gateways] DMRGateway built."
 
@@ -41,7 +41,7 @@ echo "[01-gateways] DMRGateway built."
 echo "[01-gateways] Building YSFGateway (ARCH=${DEBIAN_ARCH})..."
 git clone --depth=1 https://github.com/g4klx/YSFClients.git "${SRC_BASE}/YSFClients"
 cd "${SRC_BASE}/YSFClients/YSFGateway"
-make -j"$(nproc)"
+make CXX="${TARGET_CXX}" CC="${TARGET_CC}" -j"$(nproc)"
 cp YSFGateway "${STAGING_DIR}/YSFGateway"
 echo "[01-gateways] YSFGateway built."
 
