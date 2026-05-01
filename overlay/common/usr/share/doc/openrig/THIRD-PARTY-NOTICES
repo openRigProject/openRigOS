@@ -1,0 +1,59 @@
+openRigOS Third-Party Software Notices
+=======================================
+
+openRigOS bundles the following third-party open source programs. Their
+licenses are reproduced in the licenses/ subdirectory of this directory.
+Source code for each project is available at the URLs listed below.
+
+
+MMDVMHost
+---------
+Copyright (C) 2015-2024 Jonathan Naylor, G4KLX, and contributors.
+License: GNU General Public License v2.0
+Source:  https://github.com/g4klx/MMDVMHost
+
+MMDVMHost is the digital voice modem host software supporting DMR, D-Star,
+System Fusion (YSF), P25, NXDN, M17, and POCSAG modes on MMDVM hardware.
+The exact source revision used in this image is recorded in
+licenses/MMDVMHost-SOURCE.
+
+
+DMRGateway
+----------
+Copyright (C) 2015-2024 Jonathan Naylor, G4KLX, and contributors.
+License: GNU General Public License v2.0
+Source:  https://github.com/g4klx/DMRGateway
+
+DMRGateway provides routing and gateway functionality for DMR networks,
+including BrandMeister, DMR+, TGIF, and FreeDMR.
+The exact source revision used in this image is recorded in
+licenses/DMRGateway-SOURCE.
+
+
+YSFGateway
+----------
+Copyright (C) 2015-2024 Jonathan Naylor, G4KLX, and contributors.
+License: GNU General Public License v2.0
+Source:  https://github.com/g4klx/YSFClients
+
+YSFGateway (part of the YSFClients suite) provides gateway functionality
+for Yaesu System Fusion (YSF) reflectors and FCS rooms.
+The exact source revision used in this image is recorded in
+licenses/YSFGateway-SOURCE.
+
+
+GNU General Public License v2.0
+--------------------------------
+The full text of the GPL v2 license, which applies to MMDVMHost,
+DMRGateway, and YSFGateway, is in licenses/GPL-2.0.txt.
+
+In accordance with GPL v2, the source code for these programs is available
+at the GitHub URLs listed above. You may obtain a copy of the source by
+cloning the respective repositories.
+
+
+openRigOS
+---------
+Copyright (C) 2025 openRig Contributors.
+License: MIT (see licenses/openRigOS-LICENSE.txt)
+Source:  https://github.com/openRigProject/openRigOS

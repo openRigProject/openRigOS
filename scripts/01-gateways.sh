@@ -35,6 +35,10 @@ git clone --depth=1 https://github.com/g4klx/DMRGateway.git "${SRC_BASE}/DMRGate
 cd "${SRC_BASE}/DMRGateway"
 make CXX="${TARGET_CXX}" CC="${TARGET_CC}" -j"$(nproc)"
 cp DMRGateway "${STAGING_DIR}/DMRGateway"
+mkdir -p "${STAGING_DIR}/licenses"
+[ -f COPYING ] && cp COPYING "${STAGING_DIR}/licenses/DMRGateway-COPYING.txt"
+git rev-parse HEAD > "${STAGING_DIR}/licenses/DMRGateway-SOURCE.txt"
+echo "https://github.com/g4klx/DMRGateway" >> "${STAGING_DIR}/licenses/DMRGateway-SOURCE.txt"
 echo "[01-gateways] DMRGateway built."
 
 # ── YSFGateway (from YSFClients repo) ────────────────────────────────────
@@ -43,6 +47,10 @@ git clone --depth=1 https://github.com/g4klx/YSFClients.git "${SRC_BASE}/YSFClie
 cd "${SRC_BASE}/YSFClients/YSFGateway"
 make CXX="${TARGET_CXX}" CC="${TARGET_CC}" -j"$(nproc)"
 cp YSFGateway "${STAGING_DIR}/YSFGateway"
+mkdir -p "${STAGING_DIR}/licenses"
+[ -f ../COPYING ] && cp ../COPYING "${STAGING_DIR}/licenses/YSFGateway-COPYING.txt"
+git -C "${SRC_BASE}/YSFClients" rev-parse HEAD > "${STAGING_DIR}/licenses/YSFGateway-SOURCE.txt"
+echo "https://github.com/g4klx/YSFClients" >> "${STAGING_DIR}/licenses/YSFGateway-SOURCE.txt"
 echo "[01-gateways] YSFGateway built."
 
 echo "[01-gateways] Done. Gateway binaries staged in ${STAGING_DIR}"

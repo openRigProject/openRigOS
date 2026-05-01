@@ -32,6 +32,11 @@ if [ -d "${STAGING_DIR}" ]; then
             && cp "$f" "${ROOTFS_DIR}/usr/local/bin/" \
             && chmod +x "${ROOTFS_DIR}/usr/local/bin/${base}"
     done
+    # Third-party license files → /usr/share/doc/openrig/licenses/
+    if [ -d "${STAGING_DIR}/licenses" ]; then
+        mkdir -p "${ROOTFS_DIR}/usr/share/doc/openrig/licenses"
+        cp "${STAGING_DIR}/licenses/"* "${ROOTFS_DIR}/usr/share/doc/openrig/licenses/"
+    fi
 fi
 
 # Download YSF/FCS host lists into the image

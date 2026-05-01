@@ -36,4 +36,10 @@ make CXX="${TARGET_CXX}" CC="${TARGET_CC}" -j"$(nproc)"
 mkdir -p "${STAGING_DIR}"
 cp MMDVMHost "${STAGING_DIR}/MMDVMHost"
 
+# Stage license files for installation into /usr/share/doc/openrig/licenses/
+mkdir -p "${STAGING_DIR}/licenses"
+[ -f COPYING ] && cp COPYING "${STAGING_DIR}/licenses/MMDVMHost-COPYING.txt"
+git rev-parse HEAD > "${STAGING_DIR}/licenses/MMDVMHost-SOURCE.txt"
+echo "https://github.com/g4klx/MMDVMHost" >> "${STAGING_DIR}/licenses/MMDVMHost-SOURCE.txt"
+
 echo "[00-mmdvmhost] Done. MMDVMHost staged in ${STAGING_DIR}"
