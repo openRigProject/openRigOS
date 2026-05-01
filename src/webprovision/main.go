@@ -350,6 +350,33 @@ document.addEventListener('DOMContentLoaded',function(){
   syncDmrIdVisibility();
 });
 
+// ── Load from backup ──────────────────────────────────────────────────────
+function loadFromBackup(input){
+  var file=input.files[0];
+  if(!file)return;
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var d;try{d=JSON.parse(e.target.result);}catch(err){alert('Invalid JSON file');return;}
+    var o=d.openrig||{};var op=o.operator||{};var dev=o.device||{};
+    var hs=o.hotspot||{};var dmr=hs.dmr||{};
+    function setF(name,val){var el=document.querySelector('[name='+name+']');if(el)el.value=val;}
+    function setS(name,val){var el=document.querySelector('[name='+name+']');if(!el)return;
+      for(var i=0;i<el.options.length;i++){if(el.options[i].value===val){el.selectedIndex=i;break;}}}
+    if(op.callsign)setF('callsign',op.callsign.toUpperCase());
+    if(op.name)setF('operator_name',op.name);
+    if(op.grid_square)setF('grid_square',op.grid_square.toUpperCase());
+    if(dev.timezone)setS('timezone',dev.timezone);
+    if(dev.type)setS('device_type',dev.type);
+    if(op.country)setS('country',op.country);
+    if(dmr.dmr_id)setF('dmr_id',String(dmr.dmr_id));
+    document.getElementById('provision-import-name').textContent=file.name+' loaded';
+    // trigger hostname sync and DMR section visibility
+    var cs=document.querySelector('[name=callsign]');if(cs)cs.dispatchEvent(new Event('input'));
+    var dt=document.querySelector('[name=device_type]');if(dt)dt.dispatchEvent(new Event('change'));
+  };
+  reader.readAsText(file);
+}
+
 // ── WiFi scan ────────────────────────────────────────────────────────────
 function scanWifi(idx){
   var btn=document.getElementById('scan-btn-'+idx);
@@ -456,6 +483,15 @@ func renderPage(w http.ResponseWriter, title, subtitle string, body template.HTM
 func renderForm(w http.ResponseWriter, errMsg string) {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `<form method="POST" action="/provision">
+  <div class="section">
+    <div class="stitle">Load from Backup <span class="opt">(optional)</span></div>
+    <p class="hint" style="margin-bottom:.75rem">Upload a config exported from another openRig device to pre-fill this form.</p>
+    <label class="btn-sm" style="cursor:pointer;display:inline-block">
+      Choose fileâ¦
+      <input type="file" id="provision-import-file" accept=".json" style="display:none" onchange="loadFromBackup(this)">
+    </label>
+    <span id="provision-import-name" style="margin-left:.75rem;font-size:.85rem;color:#64748b"></span>
+  </div>
   <div class="section">
     <div class="stitle">Change Password</div>
     <label>New Password</label>
@@ -1036,6 +1072,63 @@ func renderManagement(w http.ResponseWriter, apiEnabled, mdnsEnabled bool, hostn
 	b.WriteString(`</div>`)
 
 	renderPage(w, "Management", "Device management", template.HTML(b.String()), "")
+}
+
+
+// ── Config export / import ────────────────────────────────────────────────
+
+func handleConfigExport(w http.ResponseWriter, r *http.Request) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		http.Error(w, "cannot read config", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="openrig-config.json"`)
+	w.Write(data)
+}
+
+func handleConfigImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	jsonResp := func(v map[string]any) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(v)
+	}
+
+	var incoming map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
+		jsonResp(map[string]any{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	incomingOpenrig, ok := incoming["openrig"].(map[string]any)
+	if !ok {
+		jsonResp(map[string]any{"error": "not a valid openRig config file"})
+		return
+	}
+	// Always mark device as provisioned so importing on a fresh device works.
+	if dev, ok := incomingOpenrig["device"].(map[string]any); ok {
+		dev["provisioned"] = true
+	}
+
+	data, err := json.MarshalIndent(incoming, "", "  ")
+	if err != nil {
+		jsonResp(map[string]any{"error": "cannot marshal config"})
+		return
+	}
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		jsonResp(map[string]any{"error": "cannot write config: " + err.Error()})
+		return
+	}
+
+	go func() {
+		exec.Command("/usr/local/lib/openrig/mmdvm-update.sh").Run()
+		exec.Command("systemctl", "restart", "openrig-api.service").Run()
+	}()
+
+	jsonResp(map[string]any{"ok": true})
 }
 
 func handleManagement(w http.ResponseWriter, r *http.Request) {
@@ -1684,6 +1777,21 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
   </div>
 </div>
 
+  <div class="card">
+    <div class="card-title">Configuration Backup</div>
+    <p style="color:#94a3b8;font-size:.875rem;margin-bottom:1rem">Export your full configuration as a JSON file or restore from a previous backup.</p>
+    <div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center">
+      <a href="/config/export" class="btn" style="font-size:.875rem;padding:.5rem 1rem;text-decoration:none" download>&#8659; Export Config</a>
+      <label class="btn btn-outline" style="cursor:pointer;font-size:.875rem;padding:.5rem 1rem;margin:0">
+        &#8657; Import Config
+        <input type="file" id="import-config-file" accept=".json" style="display:none" onchange="importConfig(this)">
+      </label>
+    </div>
+    <p class="hint" style="margin-top:.75rem">Import replaces the current configuration and restarts services. The page will reload automatically.</p>
+  </div>
+
+</div>
+
 </div>
 
 <div class="toast" id="toast"></div>
@@ -2110,6 +2218,25 @@ function testQrzCreds(){
     res.textContent='Failed: '+e.message;
   });
 }
+function importConfig(input){
+  var file=input.files[0];if(!file)return;
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var d;try{d=JSON.parse(e.target.result);}catch(err){toast('Invalid JSON file',true);return;}
+    if(!d.openrig){toast('Not a valid openRig config file',true);return;}
+    fetch('/config/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
+      .then(function(r){return r.json();})
+      .then(function(r){
+        if(r.error){toast(r.error,true);return;}
+        toast('Config imported — reloading in 4 seconds…');
+        setTimeout(function(){location.reload();},4000);
+      })
+      .catch(function(e){toast(e.message,true);});
+    input.value='';
+  };
+  reader.readAsText(file);
+}
+
 function saveDevice(){
   var body={callsign:document.getElementById('dev-callsign').value,hostname:document.getElementById('dev-hostname').value,
     name:document.getElementById('dev-name').value,gridSquare:document.getElementById('dev-grid').value,
@@ -2245,6 +2372,8 @@ func main() {
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/gateway-cmd", handleGatewayCmd)
 	mux.HandleFunc("/scan", handleScan)
+	mux.HandleFunc("/config/export", handleConfigExport)
+	mux.HandleFunc("/config/import", handleConfigImport)
 	mux.HandleFunc("/provision", handleProvision)
 	mux.HandleFunc("/management", handleManagement)
 	mux.HandleFunc("/hotspot", handleHotspotUI)
