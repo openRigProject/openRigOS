@@ -78,9 +78,15 @@ case "${IMAGE_TYPE}" in
         mksquashfs "${ROOTFS_DIR}" "${ISO_STAGING}/live/filesystem.squashfs" \
             -comp xz -e boot
 
-        # Copy kernel and initrd
-        cp "${ROOTFS_DIR}/boot/vmlinuz"   "${ISO_STAGING}/boot/vmlinuz"
-        cp "${ROOTFS_DIR}/boot/initrd.img" "${ISO_STAGING}/boot/initrd.img"
+        # Copy kernel and initrd — resolve versioned filenames if plain symlinks are absent
+        VMLINUZ=$(ls "${ROOTFS_DIR}/boot/vmlinuz" 2>/dev/null \
+            || ls "${ROOTFS_DIR}/boot/vmlinuz"-* 2>/dev/null | sort -V | tail -1)
+        INITRD=$(ls "${ROOTFS_DIR}/boot/initrd.img" 2>/dev/null \
+            || ls "${ROOTFS_DIR}/boot/initrd.img"-* 2>/dev/null | sort -V | tail -1)
+        [ -z "${VMLINUZ}" ] && { echo "[06-image] ERROR: no vmlinuz found in ${ROOTFS_DIR}/boot/"; exit 1; }
+        [ -z "${INITRD}"  ] && { echo "[06-image] ERROR: no initrd.img found in ${ROOTFS_DIR}/boot/"; exit 1; }
+        cp "${VMLINUZ}" "${ISO_STAGING}/boot/vmlinuz"
+        cp "${INITRD}"  "${ISO_STAGING}/boot/initrd.img"
 
         # GRUB config
         cat > "${ISO_STAGING}/boot/grub/grub.cfg" <<GRUBEOF
