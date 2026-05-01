@@ -351,32 +351,6 @@ document.addEventListener('DOMContentLoaded',function(){
 });
 
 // ── Load from backup ──────────────────────────────────────────────────────
-function loadFromBackup(input){
-  var file=input.files[0];
-  if(!file)return;
-  var reader=new FileReader();
-  reader.onload=function(e){
-    var d;try{d=JSON.parse(e.target.result);}catch(err){alert('Invalid JSON file');return;}
-    var o=d.openrig||{};var op=o.operator||{};var dev=o.device||{};
-    var hs=o.hotspot||{};var dmr=hs.dmr||{};
-    function setF(name,val){var el=document.querySelector('[name='+name+']');if(el)el.value=val;}
-    function setS(name,val){var el=document.querySelector('[name='+name+']');if(!el)return;
-      for(var i=0;i<el.options.length;i++){if(el.options[i].value===val){el.selectedIndex=i;break;}}}
-    if(op.callsign)setF('callsign',op.callsign.toUpperCase());
-    if(op.name)setF('operator_name',op.name);
-    if(op.grid_square)setF('grid_square',op.grid_square.toUpperCase());
-    if(dev.timezone)setS('timezone',dev.timezone);
-    if(dev.type)setS('device_type',dev.type);
-    if(op.country)setS('country',op.country);
-    if(dmr.dmr_id)setF('dmr_id',String(dmr.dmr_id));
-    document.getElementById('provision-import-name').textContent=file.name+' loaded';
-    // trigger hostname sync and DMR section visibility
-    var cs=document.querySelector('[name=callsign]');if(cs)cs.dispatchEvent(new Event('input'));
-    var dt=document.querySelector('[name=device_type]');if(dt)dt.dispatchEvent(new Event('change'));
-  };
-  reader.readAsText(file);
-}
-
 // ── WiFi scan ────────────────────────────────────────────────────────────
 function scanWifi(idx){
   var btn=document.getElementById('scan-btn-'+idx);
@@ -483,15 +457,6 @@ func renderPage(w http.ResponseWriter, title, subtitle string, body template.HTM
 func renderForm(w http.ResponseWriter, errMsg string) {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `<form method="POST" action="/provision">
-  <div class="section">
-    <div class="stitle">Load from Backup <span class="opt">(optional)</span></div>
-    <p class="hint" style="margin-bottom:.75rem">Upload a config exported from another openRig device to pre-fill this form.</p>
-    <label class="btn-sm" style="cursor:pointer;display:inline-block">
-      Choose fileâ¦
-      <input type="file" id="provision-import-file" accept=".json" style="display:none" onchange="loadFromBackup(this)">
-    </label>
-    <span id="provision-import-name" style="margin-left:.75rem;font-size:.85rem;color:#64748b"></span>
-  </div>
   <div class="section">
     <div class="stitle">Change Password</div>
     <label>New Password</label>
@@ -792,6 +757,20 @@ func handleProvision(w http.ResponseWriter, r *http.Request) {
 		} else {
 			wifiConfigured = true
 		}
+	}
+
+	// Persist network list (without passwords) so GetWifi can return them later.
+	netList := make([]any, len(networks))
+	for i, n := range networks {
+		netList[i] = map[string]any{
+			"ssid":     n.SSID,
+			"security": n.Security,
+			"priority": n.Priority,
+		}
+	}
+	nested(cfg, "openrig.network.wifi.networks", netList)
+	if err := writeConfig(cfg); err != nil {
+		log.Printf("WiFi config persist error: %v", err)
 	}
 
 	renderDone(w, hostname, deviceType, callsign, operatorName, gridSquare, country, timezone, dmrID, networks)
@@ -1775,9 +1754,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
   <div class="btn-row">
     <button class="btn" onclick="saveDevice()">Save Device Config</button>
   </div>
-</div>
-
-  <div class="card">
+  <div class="card" style="margin-top:1rem">
     <div class="card-title">Configuration Backup</div>
     <p style="color:#94a3b8;font-size:.875rem;margin-bottom:1rem">Export your full configuration as a JSON file or restore from a previous backup.</p>
     <div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center">
@@ -1789,7 +1766,6 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     </div>
     <p class="hint" style="margin-top:.75rem">Import replaces the current configuration and restarts services. The page will reload automatically.</p>
   </div>
-
 </div>
 
 </div>
@@ -2030,7 +2006,7 @@ function appendOrUpdateLastHeard(e){
   tbl.style.display='';emp.style.display='none';
   tb.insertBefore(makeHeardRow(e),tb.firstChild);
   // Map pin — use cache if available (no fly), otherwise lookup and fly once.
-  if(typeof openrig!=='undefined'&&openrig.lookupCallsign){
+  if(typeof openrig!=='undefined'&&openrig.lookupCallsign&&qrzAvailable){
     var lookupCall=baseCall(e.callsign);
     if(heardCallsignInfo[lookupCall]){
       initHeardMap();
@@ -2046,7 +2022,10 @@ function appendOrUpdateLastHeard(e){
           updateMapPin(infoWithOrig,pinnedCallsign===null);
           if(pinnedCallsign===null)showHeardDetail(infoWithOrig);
         }
-      }).catch(function(){});
+      }).catch(function(err){
+        console.warn('QRZ lookup failed for '+lookupCall+':',(err&&err.message)||String(err));
+        qrzAvailable=false;
+      });
     }
   }
 }
@@ -2136,6 +2115,7 @@ function saveHotspot(){
   };
   openrig.updateHotspot(body).then(function(){toast('Hotspot config saved');openrig.getHotspot().then(renderHotspotStatus).catch(function(){});}).catch(function(e){toast(e.message,true);});
 }
+var qrzAvailable=false;
 var wifiNets=[];
 function loadWifi(){
   openrig.getWifi().then(function(d){wifiNets=d.networks||[];renderWifiNets();}).catch(function(){});
@@ -2194,6 +2174,7 @@ function loadDevice(){
     document.getElementById('dev-timezone').value=d.timezone||'UTC';
     document.getElementById('dev-qrz-user').value=d.qrzUsername||'';
     document.getElementById('dev-qrz-pass').value=d.qrzPassword||'';
+    qrzAvailable=!!(d.qrzUsername&&d.qrzPassword);
   }).catch(function(){});
 }
 function testQrzCreds(){
@@ -2213,9 +2194,10 @@ function testQrzCreds(){
     var name=((info.firstName||'')+' '+(info.lastName||'')).trim();
     res.style.color='#22c55e';
     res.textContent='OK — '+info.call+(name?' ('+name+')':'')+(info.city?', '+info.city:'')+(info.state?', '+info.state:'');
+    qrzAvailable=true;
   }).catch(function(e){
     res.style.color='#ef4444';
-    res.textContent='Failed: '+e.message;
+    res.textContent='Failed for '+callsign+': '+(e.message||String(e));
   });
 }
 function importConfig(input){
