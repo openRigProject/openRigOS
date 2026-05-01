@@ -1,0 +1,11 @@
+// Allow the openrig service user to start, stop, and restart openrig-* units.
+// This enables openrig-api to manage system services without sudo or root.
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        subject.user === "openrig") {
+        var unit = action.lookup("unit");
+        if (unit && unit.match(/^openrig-.*\.service$/)) {
+            return polkit.Result.YES;
+        }
+    }
+});

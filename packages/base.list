@@ -60,3 +60,6 @@ htop
 tmux
 vim-tiny
 less
+
+# polkit — allows openrig user to manage openrig-* systemd services via D-Bus
+policykit-1
