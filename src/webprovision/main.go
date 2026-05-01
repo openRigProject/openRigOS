@@ -256,6 +256,12 @@ func generateHostname(callsign, deviceType string) string {
 	return slug + "-" + deviceType
 }
 
+// ── Branding assets ───────────────────────────────────────────────────────
+
+const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -10 220 220" fill="none"><style>.r{stroke:#38bdf8;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}</style><rect class="r" x="12" y="52" width="176" height="120" rx="9"/><path class="r" d="M62 52Q62 32 100 32Q138 32 138 52"/><rect class="r" x="22" y="167" width="22" height="11" rx="3"/><rect class="r" x="156" y="167" width="22" height="11" rx="3"/><rect class="r" x="15" y="40" width="20" height="15" rx="2.5"/><line class="r" x1="16" y1="41" x2="58" y2="-8"/><line class="r" x1="28" y1="45" x2="70" y2="-4"/><circle class="r" cx="64" cy="-8" r="5"/><circle class="r" cx="72" cy="114" r="46"/><circle class="r" cx="72" cy="114" r="33"/><circle class="r" cx="72" cy="114" r="19"/><line class="r" x1="72" y1="68" x2="72" y2="95"/><line class="r" x1="72" y1="133" x2="72" y2="160"/><line class="r" x1="26" y1="114" x2="53" y2="114"/><line class="r" x1="91" y1="114" x2="118" y2="114"/><circle class="r" cx="72" cy="114" r="7"/><rect class="r" x="128" y="64" width="48" height="30" rx="4"/><rect class="r" x="132" y="68" width="40" height="22" rx="2"/><rect class="r" x="128" y="101" width="14" height="10" rx="2"/><rect class="r" x="147" y="101" width="14" height="10" rx="2"/><rect class="r" x="166" y="101" width="14" height="10" rx="2"/><rect class="r" x="128" y="116" width="14" height="10" rx="2"/><rect class="r" x="147" y="116" width="14" height="10" rx="2"/><rect class="r" x="166" y="116" width="14" height="10" rx="2"/><circle class="r" cx="170" cy="148" r="16"/><circle class="r" cx="170" cy="148" r="9"/><line class="r" x1="170" y1="139" x2="170" y2="132"/></svg>`
+
+const inlineLogoSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -10 220 220" width="28" height="28" fill="none" style="flex-shrink:0"><rect stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" x="12" y="52" width="176" height="120" rx="9"/><path stroke="#38bdf8" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round" d="M62 52Q62 32 100 32Q138 32 138 52"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="72" cy="114" r="46"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="72" cy="114" r="19"/><circle stroke="#38bdf8" stroke-width="5" fill="#38bdf8" cx="72" cy="114" r="7"/><rect stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" x="128" y="64" width="48" height="30" rx="4"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="170" cy="148" r="16"/></svg>`
+
 // ── HTML template ─────────────────────────────────────────────────────────
 
 var pageTmpl = template.Must(template.New("page").Parse(`<!DOCTYPE html>
@@ -264,6 +270,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>openRigOS — {{.Title}}</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;
@@ -314,7 +321,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!DOCTYPE html>
 </style>
 </head>
 <body><div class="card">
-  <div class="logo">openRigOS</div>
+  <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.2rem"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -10 220 220" width="28" height="28" fill="none" style="flex-shrink:0"><rect stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" x="12" y="52" width="176" height="120" rx="9"/><path stroke="#38bdf8" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round" d="M62 52Q62 32 100 32Q138 32 138 52"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="72" cy="114" r="46"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="72" cy="114" r="19"/><circle stroke="#38bdf8" stroke-width="5" fill="#38bdf8" cx="72" cy="114" r="7"/><rect stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" x="128" y="64" width="48" height="30" rx="4"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="170" cy="148" r="16"/></svg><div class="logo">openRig<span style="color:#94a3b8;font-weight:500">OS</span></div></div>
   <div class="sub">{{.Subtitle}}</div>
   {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
   {{.Body}}
@@ -1269,6 +1276,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>openRig Management</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
@@ -1378,7 +1386,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
 <body>
 <div id="conn-warn">&#9888; Connection lost — retrying... (<span id="conn-warn-count">0</span> failed attempts)</div>
 <div class="header">
-  <div class="logo">openRig</div>
+  <div style="display:flex;align-items:center;gap:.6rem"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -10 220 220" width="28" height="28" fill="none" style="flex-shrink:0"><rect stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" x="12" y="52" width="176" height="120" rx="9"/><path stroke="#38bdf8" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round" d="M62 52Q62 32 100 32Q138 32 138 52"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="72" cy="114" r="46"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="72" cy="114" r="19"/><circle stroke="#38bdf8" stroke-width="5" fill="#38bdf8" cx="72" cy="114" r="7"/><rect stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" x="128" y="64" width="48" height="30" rx="4"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="170" cy="148" r="16"/></svg><div class="logo">openRig</div></div>
   <div class="status-badge" id="status-badge">Loading...</div>
 </div>
 <div class="tabs">
@@ -2229,6 +2237,11 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write([]byte(faviconSVG))
+	})
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/gateway-cmd", handleGatewayCmd)
 	mux.HandleFunc("/scan", handleScan)
