@@ -926,6 +926,60 @@ var (
 	ysfLinkState = "unlinked" // "linking"|"linked"|"unlinked"
 )
 
+// ── BER broadcast for StreamCalibration ──────────────────────────────────
+
+// berReading is a single completed-transmission BER value from MMDVMHost.
+type berReading struct {
+	BER  float64
+	Mode string
+}
+
+var (
+	berSubsMu sync.Mutex
+	berSubs   []chan berReading
+)
+
+// publishBER fans out a new BER reading to all active StreamCalibration clients.
+func publishBER(ber float64, mode string) {
+	r := berReading{BER: ber, Mode: mode}
+	berSubsMu.Lock()
+	defer berSubsMu.Unlock()
+	for _, ch := range berSubs {
+		select {
+		case ch <- r:
+		default: // skip slow consumers rather than blocking
+		}
+	}
+}
+
+// berSubsBufferSize is the per-subscriber channel buffer for BER fan-out.
+// It allows a small burst of readings to queue without blocking the MQTT
+// goroutine, while still dropping data for genuinely slow consumers.
+const berSubsBufferSize = 8
+
+// subscribeBER registers a new StreamCalibration subscriber and returns its channel.
+func subscribeBER() chan berReading {
+	ch := make(chan berReading, berSubsBufferSize)
+	berSubsMu.Lock()
+	berSubs = append(berSubs, ch)
+	berSubsMu.Unlock()
+	return ch
+}
+
+// unsubscribeBER removes the channel from the subscriber list and closes it.
+func unsubscribeBER(ch chan berReading) {
+	berSubsMu.Lock()
+	// Iterate backwards so the removal doesn't disturb unvisited indices.
+	for i := len(berSubs) - 1; i >= 0; i-- {
+		if berSubs[i] == ch {
+			berSubs = append(berSubs[:i], berSubs[i+1:]...)
+			break
+		}
+	}
+	berSubsMu.Unlock()
+	close(ch)
+}
+
 // mqttLastHeard returns a snapshot of the in-memory last-heard list.
 func mqttLastHeard() []*openrigv1.LastHeardEntry {
 	lastHeardMu.RLock()
@@ -1008,6 +1062,10 @@ func processMQTTPayload(payload []byte) {
 			entry.Duration = fmt.Sprintf("%.0fs", ev.Duration)
 			entry.Loss = fmt.Sprintf("%.2f%%", ev.BER)
 			lastHeardMu.Unlock()
+			// Publish BER to any active StreamCalibration clients.
+			if ev.BER >= 0 {
+				publishBER(ev.BER, mode)
+			}
 		}
 	}
 }
@@ -1676,23 +1734,6 @@ func (s *hotspotServer) UpdateModemCalibration(_ context.Context, req *connect.R
 	}), nil
 }
 
-// mmdvmLogPaths returns candidate MMDVMHost log file paths, most-preferred first.
-var mmdvmLogPaths = []string{
-	"/var/log/mmdvm/MMDVM.log",
-	"/var/log/MMDVM/MMDVM.log",
-	"/var/log/mmdvmhost.log",
-}
-
-// berPattern matches BER percentage lines from the MMDVMHost log.
-// Examples:
-//
-//	"M: 2024-01-15 10:23:52.456 DMR, Slot 2, ..., 0.7% BER"
-//	"M: 2024-01-15 10:23:52.456 YSF, ..., 1.25% BER"
-var berPattern = regexp.MustCompile(`\b(\d+\.\d+)%\s+BER\b`)
-
-// modePattern extracts the mode (DMR/YSF) from a log line.
-var modePattern = regexp.MustCompile(`\b(DMR|YSF|D-Star|P25|NXDN|M17)\b`)
-
 // currentCalibration reads calibration values from the config and returns them as a proto message.
 func currentCalibration() *openrigv1.ModemCalibration {
 	cfg, err := readConfig()
@@ -1710,68 +1751,33 @@ func currentCalibration() *openrigv1.ModemCalibration {
 	}
 }
 
+// StreamCalibration streams live BER readings sourced from the MQTT feed.
+// MMDVMHost publishes BER as part of its end/lost transmission events on the
+// local MQTT broker — the same source used for the last-heard list.
+// Each reading is sent to all connected StreamCalibration clients via the
+// berSubs fan-out channel established by subscribeBER/unsubscribeBER.
 func (s *hotspotServer) StreamCalibration(ctx context.Context, _ *connect.Request[openrigv1.Empty], stream *connect.ServerStream[openrigv1.CalibrationReading]) error {
 	if devMode {
 		return streamCalibrationDev(ctx, stream)
 	}
 
-	// Find the MMDVMHost log file.
-	logPath := ""
-	for _, p := range mmdvmLogPaths {
-		if _, err := os.Stat(p); err == nil {
-			logPath = p
-			break
-		}
-	}
-	if logPath == "" {
-		// No log found — still stream but with BER=-1 (no data) until cancelled.
-		<-ctx.Done()
-		return nil
-	}
-
-	f, err := os.Open(logPath)
-	if err != nil {
-		return connect.NewError(connect.CodeInternal, fmt.Errorf("cannot open MMDVMHost log: %w", err))
-	}
-	defer f.Close()
-
-	// Seek to end — we only want new BER lines, not replaying history.
-	if _, err := f.Seek(0, io.SeekEnd); err != nil {
-		return connect.NewError(connect.CodeInternal, fmt.Errorf("cannot seek MMDVMHost log: %w", err))
-	}
-
-	scanner := bufio.NewScanner(f)
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+	ch := subscribeBER()
+	defer unsubscribeBER(ch)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
-			// Drain all new lines written since last check.
-			for scanner.Scan() {
-				line := scanner.Text()
-				bm := berPattern.FindStringSubmatch(line)
-				if bm == nil {
-					continue
-				}
-				ber, err := strconv.ParseFloat(bm[1], 64)
-				if err != nil {
-					continue
-				}
-				mode := "idle"
-				if mm := modePattern.FindString(line); mm != "" {
-					mode = mm
-				}
-				reading := &openrigv1.CalibrationReading{
-					BerPercent: ber,
-					Mode:       mode,
-					Current:    currentCalibration(),
-				}
-				if err := stream.Send(reading); err != nil {
-					return err
-				}
+		case r, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if err := stream.Send(&openrigv1.CalibrationReading{
+				BerPercent: r.BER,
+				Mode:       r.Mode,
+				Current:    currentCalibration(),
+			}); err != nil {
+				return err
 			}
 		}
 	}
