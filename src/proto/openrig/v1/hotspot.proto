@@ -44,8 +44,34 @@ message CrossModeConfig {
 }
 
 message ModemConfig {
-  string type = 1; // e.g. "mmdvm_hs_hat", "zumspot", "dvmega"
-  string port = 2; // e.g. /dev/ttyAMA0
+  string type         = 1; // e.g. "mmdvm_hs_hat", "zumspot", "dvmega"
+  string port         = 2; // e.g. /dev/ttyAMA0
+  // Calibration fields (written to [Modem] section of MMDVM.ini)
+  int32  rx_offset    = 3; // RX frequency offset in Hz (compensates for crystal drift)
+  int32  tx_offset    = 4; // TX frequency offset in Hz
+  int32  rx_dc_offset = 5; // RX DC offset (0–255)
+  int32  tx_dc_offset = 6; // TX DC offset (0–255)
+  int32  rx_level     = 7; // RX audio level (0–100)
+  int32  tx_level     = 8; // TX audio level (0–100)
+  int32  dmr_delay    = 9; // DMR TX delay in ms (0–10)
+}
+
+message ModemCalibration {
+  int32 rx_offset    = 1; // RX frequency offset in Hz
+  int32 tx_offset    = 2; // TX frequency offset in Hz
+  int32 rx_dc_offset = 3; // RX DC offset (0–255)
+  int32 tx_dc_offset = 4; // TX DC offset (0–255)
+  int32 rx_level     = 5; // RX audio level (0–100)
+  int32 tx_level     = 6; // TX audio level (0–100)
+  int32 dmr_delay    = 7; // DMR TX delay in ms (0–10)
+}
+
+message UpdateModemCalibrationRequest {
+  ModemCalibration calibration = 1;
+}
+
+message UpdateModemCalibrationResponse {
+  ModemCalibration calibration = 1;
 }
 
 message HotspotConfig {
@@ -120,4 +146,7 @@ service HotspotService {
 
   // StreamLastHeard streams new last-heard entries as they appear.
   rpc StreamLastHeard(Empty)                 returns (stream LastHeardEntry);
+
+  // UpdateModemCalibration updates MMDVM modem calibration values (offsets, levels, delay).
+  rpc UpdateModemCalibration(UpdateModemCalibrationRequest) returns (UpdateModemCalibrationResponse);
 }

@@ -206,6 +206,23 @@ func getFloat(m map[string]any, path string) float64 {
 	return v
 }
 
+func getFloatDefault(m map[string]any, path string, fallback float64) float64 {
+	v, ok := nestedGet(m, path).(float64)
+	if !ok {
+		return fallback
+	}
+	return v
+}
+
+// defaultAudioLevel returns the given level, substituting the MMDVM default of 50
+// when the value is zero (proto3 zero-value, meaning "not explicitly set").
+func defaultAudioLevel(level int32) int {
+	if level == 0 {
+		return 50
+	}
+	return int(level)
+}
+
 // ── System helpers ───────────────────────────────────────────────────────
 
 type systemMetrics struct {
@@ -809,8 +826,15 @@ func buildHotspotConfig(cfg map[string]any) *openrigv1.HotspotConfig {
 			Dmr2YsfRoom:      getString(cfg, "openrig.hotspot.cross_mode.dmr2ysf_room", ""),
 		},
 		Modem: &openrigv1.ModemConfig{
-			Type: getString(cfg, "openrig.hotspot.modem.type", "mmdvm_hs_hat"),
-			Port: getString(cfg, "openrig.hotspot.modem.port", "/dev/ttyAMA0"),
+			Type:        getString(cfg, "openrig.hotspot.modem.type", "mmdvm_hs_hat"),
+			Port:        getString(cfg, "openrig.hotspot.modem.port", "/dev/ttyAMA0"),
+			RxOffset:    int32(getFloat(cfg, "openrig.hotspot.modem.rx_offset")),
+			TxOffset:    int32(getFloat(cfg, "openrig.hotspot.modem.tx_offset")),
+			RxDcOffset:  int32(getFloat(cfg, "openrig.hotspot.modem.rx_dc_offset")),
+			TxDcOffset:  int32(getFloat(cfg, "openrig.hotspot.modem.tx_dc_offset")),
+			RxLevel:     int32(getFloatDefault(cfg, "openrig.hotspot.modem.rx_level", 50)),
+			TxLevel:     int32(getFloatDefault(cfg, "openrig.hotspot.modem.tx_level", 50)),
+			DmrDelay:    int32(getFloat(cfg, "openrig.hotspot.modem.dmr_delay")),
 		},
 		RfFrequency: getFloat(cfg, "openrig.hotspot.rf_frequency"),
 		TxFrequency: getFloat(cfg, "openrig.hotspot.tx_frequency"),
@@ -1508,6 +1532,13 @@ func (s *hotspotServer) UpdateHotspot(_ context.Context, req *connect.Request[op
 	if hc.Modem != nil {
 		nested(cfg, "openrig.hotspot.modem.type", hc.Modem.Type)
 		nested(cfg, "openrig.hotspot.modem.port", hc.Modem.Port)
+		nested(cfg, "openrig.hotspot.modem.rx_offset", int(hc.Modem.RxOffset))
+		nested(cfg, "openrig.hotspot.modem.tx_offset", int(hc.Modem.TxOffset))
+		nested(cfg, "openrig.hotspot.modem.rx_dc_offset", int(hc.Modem.RxDcOffset))
+		nested(cfg, "openrig.hotspot.modem.tx_dc_offset", int(hc.Modem.TxDcOffset))
+		nested(cfg, "openrig.hotspot.modem.rx_level", defaultAudioLevel(hc.Modem.RxLevel))
+		nested(cfg, "openrig.hotspot.modem.tx_level", defaultAudioLevel(hc.Modem.TxLevel))
+		nested(cfg, "openrig.hotspot.modem.dmr_delay", int(hc.Modem.DmrDelay))
 	}
 
 	if err := writeConfig(cfg); err != nil {
@@ -1581,6 +1612,68 @@ func (s *hotspotServer) UpdateDmrId(_ context.Context, req *connect.Request[open
 	}
 
 	return connect.NewResponse(&openrigv1.UpdateDmrIdResponse{}), nil
+}
+
+func (s *hotspotServer) UpdateModemCalibration(_ context.Context, req *connect.Request[openrigv1.UpdateModemCalibrationRequest]) (*connect.Response[openrigv1.UpdateModemCalibrationResponse], error) {
+	cal := req.Msg.Calibration
+	if cal == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("calibration is required"))
+	}
+
+	// Validate ranges
+	if cal.RxLevel < 0 || cal.RxLevel > 100 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("rx_level must be 0–100"))
+	}
+	if cal.TxLevel < 0 || cal.TxLevel > 100 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("tx_level must be 0–100"))
+	}
+	if cal.RxDcOffset < 0 || cal.RxDcOffset > 255 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("rx_dc_offset must be 0–255"))
+	}
+	if cal.TxDcOffset < 0 || cal.TxDcOffset > 255 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("tx_dc_offset must be 0–255"))
+	}
+	if cal.DmrDelay < 0 || cal.DmrDelay > 10 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("dmr_delay must be 0–10"))
+	}
+
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config: %w", err))
+	}
+
+	rxLevel := defaultAudioLevel(cal.RxLevel)
+	txLevel := defaultAudioLevel(cal.TxLevel)
+	nested(cfg, "openrig.hotspot.modem.rx_offset", int(cal.RxOffset))
+	nested(cfg, "openrig.hotspot.modem.tx_offset", int(cal.TxOffset))
+	nested(cfg, "openrig.hotspot.modem.rx_dc_offset", int(cal.RxDcOffset))
+	nested(cfg, "openrig.hotspot.modem.tx_dc_offset", int(cal.TxDcOffset))
+	nested(cfg, "openrig.hotspot.modem.rx_level", rxLevel)
+	nested(cfg, "openrig.hotspot.modem.tx_level", txLevel)
+	nested(cfg, "openrig.hotspot.modem.dmr_delay", int(cal.DmrDelay))
+
+	if err := writeConfig(cfg); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write config: %w", err))
+	}
+
+	if !devMode {
+		go exec.Command("/usr/local/lib/openrig/mmdvm-update.sh").Run()
+	} else {
+		log.Printf("[dev] UpdateModemCalibration: rx_offset=%d tx_offset=%d rx_level=%d tx_level=%d rx_dc_offset=%d tx_dc_offset=%d dmr_delay=%d",
+			cal.RxOffset, cal.TxOffset, rxLevel, txLevel, cal.RxDcOffset, cal.TxDcOffset, cal.DmrDelay)
+	}
+
+	return connect.NewResponse(&openrigv1.UpdateModemCalibrationResponse{
+		Calibration: &openrigv1.ModemCalibration{
+			RxOffset:   cal.RxOffset,
+			TxOffset:   cal.TxOffset,
+			RxDcOffset: cal.RxDcOffset,
+			TxDcOffset: cal.TxDcOffset,
+			RxLevel:    int32(rxLevel),
+			TxLevel:    int32(txLevel),
+			DmrDelay:   cal.DmrDelay,
+		},
+	}), nil
 }
 
 func (s *hotspotServer) GetServers(_ context.Context, req *connect.Request[openrigv1.GetServersRequest]) (*connect.Response[openrigv1.GetServersResponse], error) {
