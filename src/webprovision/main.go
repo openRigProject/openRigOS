@@ -1403,6 +1403,12 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
   .btn-danger{background:#450a0a;color:#fca5a5;border:1px solid #7f1d1d}
   .btn-danger:hover{background:#7f1d1d}
   .btn-row{display:flex;gap:.5rem;margin-top:1rem;justify-content:flex-end}
+  .cal-btn{background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:5px;
+    padding:.3rem .55rem;font-size:.78rem;font-weight:600;cursor:pointer;transition:background .12s,color .12s;white-space:nowrap}
+  .cal-btn:hover{background:#334155;color:#f1f5f9}
+  .cal-btn:active{background:#0284c7;color:#fff;border-color:#0284c7}
+  .cal-val{min-width:3.5rem;text-align:center;font-size:.9rem;font-weight:700;color:#f1f5f9;
+    background:#0f172a;border:1px solid #334155;border-radius:5px;padding:.25rem .5rem;display:inline-block}
   .tg-table{width:100%;border-collapse:collapse;margin-top:.75rem}
   .tg-table th{text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;
     color:#64748b;padding:.4rem .5rem;border-bottom:1px solid #334155}
@@ -1756,47 +1762,103 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
   </div>
   <div class="card" style="margin-top:1rem">
     <div class="card-title">Modem Calibration</div>
-    <p style="color:#94a3b8;font-size:.875rem;margin-bottom:1rem">Adjust frequency offsets and audio levels to compensate for hardware variation in your MMDVM hat. Changes are applied immediately to MMDVM.ini.</p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
-      <div>
-        <label>RX Offset (Hz)</label>
-        <input type="number" id="cal-rx-offset" min="-9999" max="9999" value="0" placeholder="0">
-        <p class="hint">Compensates for RX crystal drift.</p>
+    <p style="color:#94a3b8;font-size:.875rem;margin-bottom:1rem">Interactive calibration tool — adjust modem parameters and watch the live BER (Bit Error Rate) change in real time, just like pi-star's calibration page. Lower BER means better signal quality.</p>
+    <div id="cal-ber-section" style="margin-bottom:1.25rem">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+        <span style="font-size:.8rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em">Live BER</span>
+        <span id="cal-ber-badge" style="font-size:.75rem;padding:.15rem .5rem;border-radius:.75rem;background:#334155;color:#94a3b8">Waiting for signal...</span>
       </div>
-      <div>
-        <label>TX Offset (Hz)</label>
-        <input type="number" id="cal-tx-offset" min="-9999" max="9999" value="0" placeholder="0">
-        <p class="hint">Compensates for TX crystal drift.</p>
+      <div style="background:#1e293b;border-radius:.5rem;height:1.5rem;overflow:hidden;border:1px solid #334155">
+        <div id="cal-ber-bar" style="height:100%;width:0%;background:#22c55e;transition:width .4s,background .4s;border-radius:.5rem"></div>
       </div>
-      <div>
-        <label>RX Level (0–100)</label>
-        <input type="number" id="cal-rx-level" min="0" max="100" value="50" placeholder="50">
-        <p class="hint">Incoming audio gain.</p>
-      </div>
-      <div>
-        <label>TX Level (0–100)</label>
-        <input type="number" id="cal-tx-level" min="0" max="100" value="50" placeholder="50">
-        <p class="hint">Outgoing audio gain.</p>
-      </div>
-      <div>
-        <label>RX DC Offset (0–255)</label>
-        <input type="number" id="cal-rx-dc-offset" min="0" max="255" value="0" placeholder="0">
-        <p class="hint">Removes DC bias from RX path.</p>
-      </div>
-      <div>
-        <label>TX DC Offset (0–255)</label>
-        <input type="number" id="cal-tx-dc-offset" min="0" max="255" value="0" placeholder="0">
-        <p class="hint">Removes DC bias from TX path.</p>
-      </div>
-      <div>
-        <label>DMR TX Delay (0–10 ms)</label>
-        <input type="number" id="cal-dmr-delay" min="0" max="10" value="0" placeholder="0">
-        <p class="hint">Delay before DMR transmission.</p>
+      <div style="display:flex;justify-content:space-between;margin-top:.25rem">
+        <span style="font-size:.7rem;color:#475569">0%</span>
+        <span id="cal-ber-val" style="font-size:.85rem;font-weight:600;color:#f1f5f9">—</span>
+        <span style="font-size:.7rem;color:#475569">10%+</span>
       </div>
     </div>
-    <div class="btn-row">
-      <button class="btn" onclick="saveCalibration()">Save Calibration</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div>
+        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">RX Offset (Hz)</div>
+        <div style="display:flex;align-items:center;gap:.35rem">
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',-100)" title="-100 Hz">−100</button>
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',-10)" title="-10 Hz">−10</button>
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',-1)" title="-1 Hz">−1</button>
+          <span id="cal-v-rx-offset" class="cal-val">0</span>
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',1)" title="+1 Hz">+1</button>
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',10)" title="+10 Hz">+10</button>
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',100)" title="+100 Hz">+100</button>
+        </div>
+        <p class="hint" style="margin-top:.3rem">Compensates for RX crystal drift.</p>
+      </div>
+      <div>
+        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">TX Offset (Hz)</div>
+        <div style="display:flex;align-items:center;gap:.35rem">
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',-100)" title="-100 Hz">−100</button>
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',-10)" title="-10 Hz">−10</button>
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',-1)" title="-1 Hz">−1</button>
+          <span id="cal-v-tx-offset" class="cal-val">0</span>
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',1)" title="+1 Hz">+1</button>
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',10)" title="+10 Hz">+10</button>
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',100)" title="+100 Hz">+100</button>
+        </div>
+        <p class="hint" style="margin-top:.3rem">Compensates for TX crystal drift.</p>
+      </div>
+      <div>
+        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">RX Level (0–100)</div>
+        <div style="display:flex;align-items:center;gap:.35rem">
+          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',-5)">−5</button>
+          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',-1)">−1</button>
+          <span id="cal-v-rx-level" class="cal-val">50</span>
+          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',1)">+1</button>
+          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',5)">+5</button>
+        </div>
+        <p class="hint" style="margin-top:.3rem">Incoming audio gain.</p>
+      </div>
+      <div>
+        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">TX Level (0–100)</div>
+        <div style="display:flex;align-items:center;gap:.35rem">
+          <button class="cal-btn" onclick="calAdjust('txLevelDelta',-5)">−5</button>
+          <button class="cal-btn" onclick="calAdjust('txLevelDelta',-1)">−1</button>
+          <span id="cal-v-tx-level" class="cal-val">50</span>
+          <button class="cal-btn" onclick="calAdjust('txLevelDelta',1)">+1</button>
+          <button class="cal-btn" onclick="calAdjust('txLevelDelta',5)">+5</button>
+        </div>
+        <p class="hint" style="margin-top:.3rem">Outgoing audio gain.</p>
+      </div>
+      <div>
+        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">RX DC Offset (0–255)</div>
+        <div style="display:flex;align-items:center;gap:.35rem">
+          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',-10)">−10</button>
+          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',-1)">−1</button>
+          <span id="cal-v-rx-dc-offset" class="cal-val">0</span>
+          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',1)">+1</button>
+          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',10)">+10</button>
+        </div>
+        <p class="hint" style="margin-top:.3rem">Removes DC bias from RX path.</p>
+      </div>
+      <div>
+        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">TX DC Offset (0–255)</div>
+        <div style="display:flex;align-items:center;gap:.35rem">
+          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',-10)">−10</button>
+          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',-1)">−1</button>
+          <span id="cal-v-tx-dc-offset" class="cal-val">0</span>
+          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',1)">+1</button>
+          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',10)">+10</button>
+        </div>
+        <p class="hint" style="margin-top:.3rem">Removes DC bias from TX path.</p>
+      </div>
+      <div>
+        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">DMR TX Delay (0–10 ms)</div>
+        <div style="display:flex;align-items:center;gap:.35rem">
+          <button class="cal-btn" onclick="calAdjust('dmrDelayDelta',-1)">−1</button>
+          <span id="cal-v-dmr-delay" class="cal-val">0</span>
+          <button class="cal-btn" onclick="calAdjust('dmrDelayDelta',1)">+1</button>
+        </div>
+        <p class="hint" style="margin-top:.3rem">Delay before DMR transmission.</p>
+      </div>
     </div>
+    <p id="cal-apply-status" style="margin-top:.75rem;font-size:.8rem;color:#94a3b8;display:none"></p>
   </div>
   <div class="card" style="margin-top:1rem">
     <div class="card-title">Configuration Backup</div>
@@ -2117,14 +2179,14 @@ function loadHotspot(){
     document.getElementById('ysf-wiresx-passthrough').checked=d.ysf.wiresxPassthrough||false;
     document.getElementById('ysf2dmr-enabled').checked=d.crossMode.ysf2dmrEnabled;
     document.getElementById('ysf2dmr-tg').value=d.crossMode.ysf2dmrTalkgroup||'';
-    // Populate calibration fields from modem config
-    document.getElementById('cal-rx-offset').value=modem.rxOffset||0;
-    document.getElementById('cal-tx-offset').value=modem.txOffset||0;
-    document.getElementById('cal-rx-level').value=modem.rxLevel||50;
-    document.getElementById('cal-tx-level').value=modem.txLevel||50;
-    document.getElementById('cal-rx-dc-offset').value=modem.rxDcOffset||0;
-    document.getElementById('cal-tx-dc-offset').value=modem.txDcOffset||0;
-    document.getElementById('cal-dmr-delay').value=modem.dmrDelay||0;
+    // Populate calibration interactive display from modem config
+    document.getElementById('cal-v-rx-offset').textContent=modem.rxOffset||0;
+    document.getElementById('cal-v-tx-offset').textContent=modem.txOffset||0;
+    document.getElementById('cal-v-rx-level').textContent=modem.rxLevel!=null?modem.rxLevel:50;
+    document.getElementById('cal-v-tx-level').textContent=modem.txLevel!=null?modem.txLevel:50;
+    document.getElementById('cal-v-rx-dc-offset').textContent=modem.rxDcOffset||0;
+    document.getElementById('cal-v-tx-dc-offset').textContent=modem.txDcOffset||0;
+    document.getElementById('cal-v-dmr-delay').textContent=modem.dmrDelay||0;
   }).catch(function(e){console.error('loadHotspot failed:',e);});
 }
 function renderTalkgroups(){
@@ -2279,17 +2341,60 @@ function saveDevice(){
     qrzPassword:document.getElementById('dev-qrz-pass').value};
   openrig.updateConfig(body).then(function(){toast('Device config saved');openrig.getStatus().then(renderStatus).catch(function(){});}).catch(function(e){toast(e.message,true);});
 }
-function saveCalibration(){
-  var cal={
-    rxOffset:parseInt(document.getElementById('cal-rx-offset').value)||0,
-    txOffset:parseInt(document.getElementById('cal-tx-offset').value)||0,
-    rxLevel:parseInt(document.getElementById('cal-rx-level').value)||50,
-    txLevel:parseInt(document.getElementById('cal-tx-level').value)||50,
-    rxDcOffset:parseInt(document.getElementById('cal-rx-dc-offset').value)||0,
-    txDcOffset:parseInt(document.getElementById('cal-tx-dc-offset').value)||0,
-    dmrDelay:parseInt(document.getElementById('cal-dmr-delay').value)||0
-  };
-  openrig.updateModemCalibration(cal).then(function(){toast('Calibration saved');}).catch(function(e){toast(e.message,true);});
+function calAdjust(field,delta){
+  var req={};req[field]=delta;
+  var status=document.getElementById('cal-apply-status');
+  status.style.display='';status.style.color='#94a3b8';status.textContent='Applying…';
+  openrig.adjustCalibration(req).then(function(r){
+    var c=r.current||{};
+    document.getElementById('cal-v-rx-offset').textContent=c.rxOffset||0;
+    document.getElementById('cal-v-tx-offset').textContent=c.txOffset||0;
+    document.getElementById('cal-v-rx-level').textContent=c.rxLevel!=null?c.rxLevel:50;
+    document.getElementById('cal-v-tx-level').textContent=c.txLevel!=null?c.txLevel:50;
+    document.getElementById('cal-v-rx-dc-offset').textContent=c.rxDcOffset||0;
+    document.getElementById('cal-v-tx-dc-offset').textContent=c.txDcOffset||0;
+    document.getElementById('cal-v-dmr-delay').textContent=c.dmrDelay||0;
+    status.style.color='#22c55e';status.textContent='Applied — modem updating…';
+    setTimeout(function(){status.style.display='none';},2500);
+  }).catch(function(e){
+    status.style.color='#ef4444';status.textContent='Error: '+(e.message||String(e));
+  });
+}
+function updateCalBerDisplay(reading){
+  var ber=reading.berPercent;
+  var mode=reading.mode||'';
+  var bar=document.getElementById('cal-ber-bar');
+  var val=document.getElementById('cal-ber-val');
+  var badge=document.getElementById('cal-ber-badge');
+  if(ber<0){
+    // No reading yet — show waiting state
+    bar.style.width='0%';
+    val.textContent='—';
+    val.style.color='#f1f5f9';
+    badge.textContent='Waiting for signal...';
+    badge.style.background='#334155';badge.style.color='#94a3b8';
+    return;
+  }
+  // Cap visual at 10% for bar width
+  var pct=Math.min(ber/10*100,100);
+  bar.style.width=pct+'%';
+  bar.style.background=ber<2?'#22c55e':ber<5?'#f59e0b':'#ef4444';
+  val.textContent=ber.toFixed(2)+'%';
+  val.style.color=ber<2?'#22c55e':ber<5?'#f59e0b':'#ef4444';
+  badge.textContent=(mode&&mode!=='idle'?mode+' — ':'')+ber.toFixed(2)+'% BER';
+  badge.style.background=ber<2?'#14532d':ber<5?'#451a03':'#450a0a';
+  badge.style.color=ber<2?'#86efac':ber<5?'#fcd34d':'#fca5a5';
+  // Also update current values if provided
+  if(reading.current){
+    var c=reading.current;
+    document.getElementById('cal-v-rx-offset').textContent=c.rxOffset||0;
+    document.getElementById('cal-v-tx-offset').textContent=c.txOffset||0;
+    document.getElementById('cal-v-rx-level').textContent=c.rxLevel!=null?c.rxLevel:50;
+    document.getElementById('cal-v-tx-level').textContent=c.txLevel!=null?c.txLevel:50;
+    document.getElementById('cal-v-rx-dc-offset').textContent=c.rxDcOffset||0;
+    document.getElementById('cal-v-tx-dc-offset').textContent=c.txDcOffset||0;
+    document.getElementById('cal-v-dmr-delay').textContent=c.dmrDelay||0;
+  }
 }
 function esc(s){if(!s)return'';var d=document.createElement('div');d.appendChild(document.createTextNode(s));return d.innerHTML;}
 function renderHotspotStatus(d){
@@ -2344,6 +2449,10 @@ function initPage(){
   setInterval(function(){openrig.getHotspot().then(renderHotspotStatus).catch(function(){});},10000);
   loadHotspot();loadWifi();loadDevice();
   document.getElementById('ysf2dmr-tg').addEventListener('input',updateTGName);
+  // Start live BER calibration stream
+  if(typeof openrig.streamCalibration==='function'){
+    openrig.streamCalibration(updateCalBerDisplay);
+  }
 }
 var go=new Go();
 WebAssembly.instantiateStreaming(fetch('/openrig.wasm'),go.importObject).then(function(result){

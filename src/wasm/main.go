@@ -44,6 +44,8 @@ func main() {
 		"updateHotspot":            js.FuncOf(jsUpdateHotspot),
 		"updateDmrId":              js.FuncOf(jsUpdateDmrId),
 		"updateModemCalibration":   js.FuncOf(jsUpdateModemCalibration),
+		"streamCalibration":        js.FuncOf(jsStreamCalibration),
+		"adjustCalibration":        js.FuncOf(jsAdjustCalibration),
 		"getServers":               js.FuncOf(jsGetServers),
 		"lookupCallsign":           js.FuncOf(jsLookupCallsign),
 		"streamLastHeard":          js.FuncOf(jsStreamLastHeard),
@@ -253,6 +255,49 @@ func jsUpdateModemCalibration(_ js.Value, args []js.Value) any {
 		}
 		resp, err := hotspotClient.UpdateModemCalibration(context.Background(),
 			connect.NewRequest(&openrigv1.UpdateModemCalibrationRequest{Calibration: &cal}))
+		if err != nil {
+			return nil, err
+		}
+		return jsonOpts.Marshal(resp.Msg)
+	})
+}
+
+func jsStreamCalibration(_ js.Value, args []js.Value) any {
+	callback := args[0]
+	// Return an object with a cancel() method to the JS side so the stream can be stopped.
+	cancelHolder := js.Global().Get("Object").New()
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelHolder.Set("cancel", js.FuncOf(func(_ js.Value, _ []js.Value) any {
+			cancel()
+			return js.Undefined()
+		}))
+		stream, err := hotspotClient.StreamCalibration(ctx, connect.NewRequest(&openrigv1.Empty{}))
+		if err != nil {
+			return
+		}
+		for stream.Receive() {
+			b, err := jsonOpts.Marshal(stream.Msg())
+			if err != nil {
+				continue
+			}
+			parsed := js.Global().Get("JSON").Call("parse", string(b))
+			callback.Invoke(parsed)
+		}
+		stream.Close()
+	}()
+	return cancelHolder
+}
+
+func jsAdjustCalibration(_ js.Value, args []js.Value) any {
+	raw := jsArg(args[0]) // extract synchronously before goroutine
+	return jsPromise(func() ([]byte, error) {
+		var req openrigv1.AdjustCalibrationRequest
+		if err := protojson.Unmarshal([]byte(raw), &req); err != nil {
+			return nil, err
+		}
+		resp, err := hotspotClient.AdjustCalibration(context.Background(),
+			connect.NewRequest(&req))
 		if err != nil {
 			return nil, err
 		}

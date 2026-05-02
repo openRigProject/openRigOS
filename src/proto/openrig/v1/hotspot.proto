@@ -131,6 +131,31 @@ message CallsignInfo {
   string image_url     = 11;
 }
 
+// ── Calibration tool messages ─────────────────────────────────────────────
+
+// CalibrationReading is one live reading streamed during an active calibration session.
+message CalibrationReading {
+  double ber_percent = 1;     // bit error rate 0.0–100.0 (–1 = no reading yet)
+  string mode        = 2;     // "DMR"|"YSF"|"idle" — source of the BER reading
+  ModemCalibration current = 3; // calibration values in effect when this reading was taken
+}
+
+// AdjustCalibrationRequest applies incremental deltas to the current calibration.
+// Non-zero delta fields are applied; zero fields are unchanged.
+message AdjustCalibrationRequest {
+  int32 rx_offset_delta    = 1;
+  int32 tx_offset_delta    = 2;
+  int32 rx_level_delta     = 3;
+  int32 tx_level_delta     = 4;
+  int32 rx_dc_offset_delta = 5;
+  int32 tx_dc_offset_delta = 6;
+  int32 dmr_delay_delta    = 7;
+}
+
+message AdjustCalibrationResponse {
+  ModemCalibration current = 1; // resulting calibration after the adjustment
+}
+
 // ── Service ───────────────────────────────────────────────────────────────
 
 service HotspotService {
@@ -149,4 +174,12 @@ service HotspotService {
 
   // UpdateModemCalibration updates MMDVM modem calibration values (offsets, levels, delay).
   rpc UpdateModemCalibration(UpdateModemCalibrationRequest) returns (UpdateModemCalibrationResponse);
+
+  // StreamCalibration streams live BER readings from the MMDVMHost log.
+  // Readings arrive whenever MMDVMHost logs a completed transmission BER line.
+  rpc StreamCalibration(Empty)               returns (stream CalibrationReading);
+
+  // AdjustCalibration applies incremental deltas to the current calibration,
+  // persists them, and triggers mmdvm-update.sh.
+  rpc AdjustCalibration(AdjustCalibrationRequest) returns (AdjustCalibrationResponse);
 }

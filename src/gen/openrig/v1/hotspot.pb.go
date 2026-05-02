@@ -1196,6 +1196,205 @@ func (x *CallsignInfo) GetImageUrl() string {
 	return ""
 }
 
+// CalibrationReading is one live reading streamed during an active calibration session.
+type CalibrationReading struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BerPercent    float64                `protobuf:"fixed64,1,opt,name=ber_percent,json=berPercent,proto3" json:"ber_percent,omitempty"` // bit error rate 0.0–100.0 (–1 = no reading yet)
+	Mode          string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`                                 // "DMR"|"YSF"|"idle" — source of the BER reading
+	Current       *ModemCalibration      `protobuf:"bytes,3,opt,name=current,proto3" json:"current,omitempty"`                           // calibration values in effect when this reading was taken
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CalibrationReading) Reset() {
+	*x = CalibrationReading{}
+	mi := &file_openrig_v1_hotspot_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CalibrationReading) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CalibrationReading) ProtoMessage() {}
+
+func (x *CalibrationReading) ProtoReflect() protoreflect.Message {
+	mi := &file_openrig_v1_hotspot_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CalibrationReading.ProtoReflect.Descriptor instead.
+func (*CalibrationReading) Descriptor() ([]byte, []int) {
+	return file_openrig_v1_hotspot_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *CalibrationReading) GetBerPercent() float64 {
+	if x != nil {
+		return x.BerPercent
+	}
+	return 0
+}
+
+func (x *CalibrationReading) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *CalibrationReading) GetCurrent() *ModemCalibration {
+	if x != nil {
+		return x.Current
+	}
+	return nil
+}
+
+// AdjustCalibrationRequest applies incremental deltas to the current calibration.
+// Non-zero delta fields are applied; zero fields are unchanged.
+type AdjustCalibrationRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	RxOffsetDelta   int32                  `protobuf:"varint,1,opt,name=rx_offset_delta,json=rxOffsetDelta,proto3" json:"rx_offset_delta,omitempty"`
+	TxOffsetDelta   int32                  `protobuf:"varint,2,opt,name=tx_offset_delta,json=txOffsetDelta,proto3" json:"tx_offset_delta,omitempty"`
+	RxLevelDelta    int32                  `protobuf:"varint,3,opt,name=rx_level_delta,json=rxLevelDelta,proto3" json:"rx_level_delta,omitempty"`
+	TxLevelDelta    int32                  `protobuf:"varint,4,opt,name=tx_level_delta,json=txLevelDelta,proto3" json:"tx_level_delta,omitempty"`
+	RxDcOffsetDelta int32                  `protobuf:"varint,5,opt,name=rx_dc_offset_delta,json=rxDcOffsetDelta,proto3" json:"rx_dc_offset_delta,omitempty"`
+	TxDcOffsetDelta int32                  `protobuf:"varint,6,opt,name=tx_dc_offset_delta,json=txDcOffsetDelta,proto3" json:"tx_dc_offset_delta,omitempty"`
+	DmrDelayDelta   int32                  `protobuf:"varint,7,opt,name=dmr_delay_delta,json=dmrDelayDelta,proto3" json:"dmr_delay_delta,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *AdjustCalibrationRequest) Reset() {
+	*x = AdjustCalibrationRequest{}
+	mi := &file_openrig_v1_hotspot_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdjustCalibrationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdjustCalibrationRequest) ProtoMessage() {}
+
+func (x *AdjustCalibrationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_openrig_v1_hotspot_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdjustCalibrationRequest.ProtoReflect.Descriptor instead.
+func (*AdjustCalibrationRequest) Descriptor() ([]byte, []int) {
+	return file_openrig_v1_hotspot_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *AdjustCalibrationRequest) GetRxOffsetDelta() int32 {
+	if x != nil {
+		return x.RxOffsetDelta
+	}
+	return 0
+}
+
+func (x *AdjustCalibrationRequest) GetTxOffsetDelta() int32 {
+	if x != nil {
+		return x.TxOffsetDelta
+	}
+	return 0
+}
+
+func (x *AdjustCalibrationRequest) GetRxLevelDelta() int32 {
+	if x != nil {
+		return x.RxLevelDelta
+	}
+	return 0
+}
+
+func (x *AdjustCalibrationRequest) GetTxLevelDelta() int32 {
+	if x != nil {
+		return x.TxLevelDelta
+	}
+	return 0
+}
+
+func (x *AdjustCalibrationRequest) GetRxDcOffsetDelta() int32 {
+	if x != nil {
+		return x.RxDcOffsetDelta
+	}
+	return 0
+}
+
+func (x *AdjustCalibrationRequest) GetTxDcOffsetDelta() int32 {
+	if x != nil {
+		return x.TxDcOffsetDelta
+	}
+	return 0
+}
+
+func (x *AdjustCalibrationRequest) GetDmrDelayDelta() int32 {
+	if x != nil {
+		return x.DmrDelayDelta
+	}
+	return 0
+}
+
+type AdjustCalibrationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Current       *ModemCalibration      `protobuf:"bytes,1,opt,name=current,proto3" json:"current,omitempty"` // resulting calibration after the adjustment
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdjustCalibrationResponse) Reset() {
+	*x = AdjustCalibrationResponse{}
+	mi := &file_openrig_v1_hotspot_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdjustCalibrationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdjustCalibrationResponse) ProtoMessage() {}
+
+func (x *AdjustCalibrationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_openrig_v1_hotspot_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdjustCalibrationResponse.ProtoReflect.Descriptor instead.
+func (*AdjustCalibrationResponse) Descriptor() ([]byte, []int) {
+	return file_openrig_v1_hotspot_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *AdjustCalibrationResponse) GetCurrent() *ModemCalibration {
+	if x != nil {
+		return x.Current
+	}
+	return nil
+}
+
 var File_openrig_v1_hotspot_proto protoreflect.FileDescriptor
 
 const file_openrig_v1_hotspot_proto_rawDesc = "" +
@@ -1298,7 +1497,22 @@ const file_openrig_v1_hotspot_proto_rawDesc = "" +
 	"\x03lon\x18\t \x01(\x01R\x03lon\x12#\n" +
 	"\rlicense_class\x18\n" +
 	" \x01(\tR\flicenseClass\x12\x1b\n" +
-	"\timage_url\x18\v \x01(\tR\bimageUrl2\xbb\x04\n" +
+	"\timage_url\x18\v \x01(\tR\bimageUrl\"\x81\x01\n" +
+	"\x12CalibrationReading\x12\x1f\n" +
+	"\vber_percent\x18\x01 \x01(\x01R\n" +
+	"berPercent\x12\x12\n" +
+	"\x04mode\x18\x02 \x01(\tR\x04mode\x126\n" +
+	"\acurrent\x18\x03 \x01(\v2\x1c.openrig.v1.ModemCalibrationR\acurrent\"\xb8\x02\n" +
+	"\x18AdjustCalibrationRequest\x12&\n" +
+	"\x0frx_offset_delta\x18\x01 \x01(\x05R\rrxOffsetDelta\x12&\n" +
+	"\x0ftx_offset_delta\x18\x02 \x01(\x05R\rtxOffsetDelta\x12$\n" +
+	"\x0erx_level_delta\x18\x03 \x01(\x05R\frxLevelDelta\x12$\n" +
+	"\x0etx_level_delta\x18\x04 \x01(\x05R\ftxLevelDelta\x12+\n" +
+	"\x12rx_dc_offset_delta\x18\x05 \x01(\x05R\x0frxDcOffsetDelta\x12+\n" +
+	"\x12tx_dc_offset_delta\x18\x06 \x01(\x05R\x0ftxDcOffsetDelta\x12&\n" +
+	"\x0fdmr_delay_delta\x18\a \x01(\x05R\rdmrDelayDelta\"S\n" +
+	"\x19AdjustCalibrationResponse\x126\n" +
+	"\acurrent\x18\x01 \x01(\v2\x1c.openrig.v1.ModemCalibrationR\acurrent2\xe7\x05\n" +
 	"\x0eHotspotService\x12:\n" +
 	"\n" +
 	"GetHotspot\x12\x11.openrig.v1.Empty\x1a\x19.openrig.v1.HotspotConfig\x12L\n" +
@@ -1308,7 +1522,9 @@ const file_openrig_v1_hotspot_proto_rawDesc = "" +
 	"GetServers\x12\x1d.openrig.v1.GetServersRequest\x1a\x1e.openrig.v1.GetServersResponse\x12M\n" +
 	"\x0eLookupCallsign\x12!.openrig.v1.LookupCallsignRequest\x1a\x18.openrig.v1.CallsignInfo\x12B\n" +
 	"\x0fStreamLastHeard\x12\x11.openrig.v1.Empty\x1a\x1a.openrig.v1.LastHeardEntry0\x01\x12o\n" +
-	"\x16UpdateModemCalibration\x12).openrig.v1.UpdateModemCalibrationRequest\x1a*.openrig.v1.UpdateModemCalibrationResponseB\"Z openrig/gen/openrig/v1;openrigv1b\x06proto3"
+	"\x16UpdateModemCalibration\x12).openrig.v1.UpdateModemCalibrationRequest\x1a*.openrig.v1.UpdateModemCalibrationResponse\x12H\n" +
+	"\x11StreamCalibration\x12\x11.openrig.v1.Empty\x1a\x1e.openrig.v1.CalibrationReading0\x01\x12`\n" +
+	"\x11AdjustCalibration\x12$.openrig.v1.AdjustCalibrationRequest\x1a%.openrig.v1.AdjustCalibrationResponseB\"Z openrig/gen/openrig/v1;openrigv1b\x06proto3"
 
 var (
 	file_openrig_v1_hotspot_proto_rawDescOnce sync.Once
@@ -1322,7 +1538,7 @@ func file_openrig_v1_hotspot_proto_rawDescGZIP() []byte {
 	return file_openrig_v1_hotspot_proto_rawDescData
 }
 
-var file_openrig_v1_hotspot_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_openrig_v1_hotspot_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_openrig_v1_hotspot_proto_goTypes = []any{
 	(*Talkgroup)(nil),                      // 0: openrig.v1.Talkgroup
 	(*DMRConfig)(nil),                      // 1: openrig.v1.DMRConfig
@@ -1341,7 +1557,10 @@ var file_openrig_v1_hotspot_proto_goTypes = []any{
 	(*LastHeardEntry)(nil),                 // 14: openrig.v1.LastHeardEntry
 	(*LookupCallsignRequest)(nil),          // 15: openrig.v1.LookupCallsignRequest
 	(*CallsignInfo)(nil),                   // 16: openrig.v1.CallsignInfo
-	(*Empty)(nil),                          // 17: openrig.v1.Empty
+	(*CalibrationReading)(nil),             // 17: openrig.v1.CalibrationReading
+	(*AdjustCalibrationRequest)(nil),       // 18: openrig.v1.AdjustCalibrationRequest
+	(*AdjustCalibrationResponse)(nil),      // 19: openrig.v1.AdjustCalibrationResponse
+	(*Empty)(nil),                          // 20: openrig.v1.Empty
 }
 var file_openrig_v1_hotspot_proto_depIdxs = []int32{
 	0,  // 0: openrig.v1.DMRConfig.talkgroups:type_name -> openrig.v1.Talkgroup
@@ -1352,25 +1571,31 @@ var file_openrig_v1_hotspot_proto_depIdxs = []int32{
 	3,  // 5: openrig.v1.HotspotConfig.cross_mode:type_name -> openrig.v1.CrossModeConfig
 	4,  // 6: openrig.v1.HotspotConfig.modem:type_name -> openrig.v1.ModemConfig
 	8,  // 7: openrig.v1.UpdateHotspotRequest.config:type_name -> openrig.v1.HotspotConfig
-	17, // 8: openrig.v1.HotspotService.GetHotspot:input_type -> openrig.v1.Empty
-	9,  // 9: openrig.v1.HotspotService.UpdateHotspot:input_type -> openrig.v1.UpdateHotspotRequest
-	10, // 10: openrig.v1.HotspotService.UpdateDmrId:input_type -> openrig.v1.UpdateDmrIdRequest
-	12, // 11: openrig.v1.HotspotService.GetServers:input_type -> openrig.v1.GetServersRequest
-	15, // 12: openrig.v1.HotspotService.LookupCallsign:input_type -> openrig.v1.LookupCallsignRequest
-	17, // 13: openrig.v1.HotspotService.StreamLastHeard:input_type -> openrig.v1.Empty
-	6,  // 14: openrig.v1.HotspotService.UpdateModemCalibration:input_type -> openrig.v1.UpdateModemCalibrationRequest
-	8,  // 15: openrig.v1.HotspotService.GetHotspot:output_type -> openrig.v1.HotspotConfig
-	8,  // 16: openrig.v1.HotspotService.UpdateHotspot:output_type -> openrig.v1.HotspotConfig
-	11, // 17: openrig.v1.HotspotService.UpdateDmrId:output_type -> openrig.v1.UpdateDmrIdResponse
-	13, // 18: openrig.v1.HotspotService.GetServers:output_type -> openrig.v1.GetServersResponse
-	16, // 19: openrig.v1.HotspotService.LookupCallsign:output_type -> openrig.v1.CallsignInfo
-	14, // 20: openrig.v1.HotspotService.StreamLastHeard:output_type -> openrig.v1.LastHeardEntry
-	7,  // 21: openrig.v1.HotspotService.UpdateModemCalibration:output_type -> openrig.v1.UpdateModemCalibrationResponse
-	15, // [15:22] is the sub-list for method output_type
-	8,  // [8:15] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	5,  // 8: openrig.v1.CalibrationReading.current:type_name -> openrig.v1.ModemCalibration
+	5,  // 9: openrig.v1.AdjustCalibrationResponse.current:type_name -> openrig.v1.ModemCalibration
+	20, // 10: openrig.v1.HotspotService.GetHotspot:input_type -> openrig.v1.Empty
+	9,  // 11: openrig.v1.HotspotService.UpdateHotspot:input_type -> openrig.v1.UpdateHotspotRequest
+	10, // 12: openrig.v1.HotspotService.UpdateDmrId:input_type -> openrig.v1.UpdateDmrIdRequest
+	12, // 13: openrig.v1.HotspotService.GetServers:input_type -> openrig.v1.GetServersRequest
+	15, // 14: openrig.v1.HotspotService.LookupCallsign:input_type -> openrig.v1.LookupCallsignRequest
+	20, // 15: openrig.v1.HotspotService.StreamLastHeard:input_type -> openrig.v1.Empty
+	6,  // 16: openrig.v1.HotspotService.UpdateModemCalibration:input_type -> openrig.v1.UpdateModemCalibrationRequest
+	20, // 17: openrig.v1.HotspotService.StreamCalibration:input_type -> openrig.v1.Empty
+	18, // 18: openrig.v1.HotspotService.AdjustCalibration:input_type -> openrig.v1.AdjustCalibrationRequest
+	8,  // 19: openrig.v1.HotspotService.GetHotspot:output_type -> openrig.v1.HotspotConfig
+	8,  // 20: openrig.v1.HotspotService.UpdateHotspot:output_type -> openrig.v1.HotspotConfig
+	11, // 21: openrig.v1.HotspotService.UpdateDmrId:output_type -> openrig.v1.UpdateDmrIdResponse
+	13, // 22: openrig.v1.HotspotService.GetServers:output_type -> openrig.v1.GetServersResponse
+	16, // 23: openrig.v1.HotspotService.LookupCallsign:output_type -> openrig.v1.CallsignInfo
+	14, // 24: openrig.v1.HotspotService.StreamLastHeard:output_type -> openrig.v1.LastHeardEntry
+	7,  // 25: openrig.v1.HotspotService.UpdateModemCalibration:output_type -> openrig.v1.UpdateModemCalibrationResponse
+	17, // 26: openrig.v1.HotspotService.StreamCalibration:output_type -> openrig.v1.CalibrationReading
+	19, // 27: openrig.v1.HotspotService.AdjustCalibration:output_type -> openrig.v1.AdjustCalibrationResponse
+	19, // [19:28] is the sub-list for method output_type
+	10, // [10:19] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_openrig_v1_hotspot_proto_init() }
@@ -1385,7 +1610,7 @@ func file_openrig_v1_hotspot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openrig_v1_hotspot_proto_rawDesc), len(file_openrig_v1_hotspot_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   17,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

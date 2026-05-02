@@ -4,3 +4,4 @@ src/webprovision/webprovision
 src/openrig-api/openrig.json
 src/openrig.json
 .DS_Store
+src/wasm/wasm
