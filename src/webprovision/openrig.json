@@ -1,0 +1,32 @@
+{
+  "openrig": {
+    "device": {
+      "provisioned": true,
+      "hostname": "kc1ygy-hotspot",
+      "type": "hotspot",
+      "timezone": "America/New_York"
+    },
+    "operator": {
+      "callsign": "KC1YGY",
+      "name": "Test Operator",
+      "dmr_id": 3162302
+    },
+    "hotspot": {
+      "rf_frequency": 438.8,
+      "modem": {
+        "type": "mmdvm_hs_hat",
+        "port": "/dev/ttyAMA0",
+        "rx_offset": 100,
+        "tx_offset": -50,
+        "rx_level": 50,
+        "tx_level": 45,
+        "rx_dc_offset": 0,
+        "tx_dc_offset": 0,
+        "dmr_delay": 0
+      },
+      "dmr": { "enabled": true, "colorcode": 1, "network": "brandmeister" },
+      "ysf": { "enabled": false }
+    },
+    "management": { "api_enabled": true, "mdns_enabled": true }
+  }
+}

@@ -33,25 +33,26 @@ func main() {
 	rigClient = openrigv1connect.NewRigServiceClient(httpClient, baseURL)
 
 	js.Global().Set("openrig", js.ValueOf(map[string]any{
-		"getStatus":       js.FuncOf(jsGetStatus),
-		"streamStatus":    js.FuncOf(jsStreamStatus),
-		"getConfig":       js.FuncOf(jsGetConfig),
-		"updateConfig":    js.FuncOf(jsUpdateConfig),
-		"restartService":  js.FuncOf(jsRestartService),
-		"reboot":          js.FuncOf(jsReboot),
-		"shutdown":        js.FuncOf(jsShutdown),
-		"getHotspot":      js.FuncOf(jsGetHotspot),
-		"updateHotspot":   js.FuncOf(jsUpdateHotspot),
-		"updateDmrId":     js.FuncOf(jsUpdateDmrId),
-		"getServers":       js.FuncOf(jsGetServers),
-		"lookupCallsign":   js.FuncOf(jsLookupCallsign),
-		"streamLastHeard":  js.FuncOf(jsStreamLastHeard),
-		"getWifi":         js.FuncOf(jsGetWifi),
-		"updateWifi":      js.FuncOf(jsUpdateWifi),
-		"scanWifi":        js.FuncOf(jsScanWifi),
-		"getNetwork":      js.FuncOf(jsGetNetwork),
-		"getRigs":         js.FuncOf(jsGetRigs),
-		"updateRigs":      js.FuncOf(jsUpdateRigs),
+		"getStatus":                js.FuncOf(jsGetStatus),
+		"streamStatus":             js.FuncOf(jsStreamStatus),
+		"getConfig":                js.FuncOf(jsGetConfig),
+		"updateConfig":             js.FuncOf(jsUpdateConfig),
+		"restartService":           js.FuncOf(jsRestartService),
+		"reboot":                   js.FuncOf(jsReboot),
+		"shutdown":                 js.FuncOf(jsShutdown),
+		"getHotspot":               js.FuncOf(jsGetHotspot),
+		"updateHotspot":            js.FuncOf(jsUpdateHotspot),
+		"updateDmrId":              js.FuncOf(jsUpdateDmrId),
+		"updateModemCalibration":   js.FuncOf(jsUpdateModemCalibration),
+		"getServers":               js.FuncOf(jsGetServers),
+		"lookupCallsign":           js.FuncOf(jsLookupCallsign),
+		"streamLastHeard":          js.FuncOf(jsStreamLastHeard),
+		"getWifi":                  js.FuncOf(jsGetWifi),
+		"updateWifi":               js.FuncOf(jsUpdateWifi),
+		"scanWifi":                 js.FuncOf(jsScanWifi),
+		"getNetwork":               js.FuncOf(jsGetNetwork),
+		"getRigs":                  js.FuncOf(jsGetRigs),
+		"updateRigs":               js.FuncOf(jsUpdateRigs),
 	}))
 
 	select {} // keep alive
@@ -236,6 +237,22 @@ func jsUpdateDmrId(_ js.Value, args []js.Value) any {
 	return jsPromise(func() ([]byte, error) {
 		resp, err := hotspotClient.UpdateDmrId(context.Background(),
 			connect.NewRequest(&openrigv1.UpdateDmrIdRequest{DmrId: id}))
+		if err != nil {
+			return nil, err
+		}
+		return jsonOpts.Marshal(resp.Msg)
+	})
+}
+
+func jsUpdateModemCalibration(_ js.Value, args []js.Value) any {
+	raw := jsArg(args[0]) // extract synchronously before goroutine
+	return jsPromise(func() ([]byte, error) {
+		var cal openrigv1.ModemCalibration
+		if err := protojson.Unmarshal([]byte(raw), &cal); err != nil {
+			return nil, err
+		}
+		resp, err := hotspotClient.UpdateModemCalibration(context.Background(),
+			connect.NewRequest(&openrigv1.UpdateModemCalibrationRequest{Calibration: &cal}))
 		if err != nil {
 			return nil, err
 		}

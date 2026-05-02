@@ -1755,6 +1755,50 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     <button class="btn" onclick="saveDevice()">Save Device Config</button>
   </div>
   <div class="card" style="margin-top:1rem">
+    <div class="card-title">Modem Calibration</div>
+    <p style="color:#94a3b8;font-size:.875rem;margin-bottom:1rem">Adjust frequency offsets and audio levels to compensate for hardware variation in your MMDVM hat. Changes are applied immediately to MMDVM.ini.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+      <div>
+        <label>RX Offset (Hz)</label>
+        <input type="number" id="cal-rx-offset" min="-9999" max="9999" value="0" placeholder="0">
+        <p class="hint">Compensates for RX crystal drift.</p>
+      </div>
+      <div>
+        <label>TX Offset (Hz)</label>
+        <input type="number" id="cal-tx-offset" min="-9999" max="9999" value="0" placeholder="0">
+        <p class="hint">Compensates for TX crystal drift.</p>
+      </div>
+      <div>
+        <label>RX Level (0–100)</label>
+        <input type="number" id="cal-rx-level" min="0" max="100" value="50" placeholder="50">
+        <p class="hint">Incoming audio gain.</p>
+      </div>
+      <div>
+        <label>TX Level (0–100)</label>
+        <input type="number" id="cal-tx-level" min="0" max="100" value="50" placeholder="50">
+        <p class="hint">Outgoing audio gain.</p>
+      </div>
+      <div>
+        <label>RX DC Offset (0–255)</label>
+        <input type="number" id="cal-rx-dc-offset" min="0" max="255" value="0" placeholder="0">
+        <p class="hint">Removes DC bias from RX path.</p>
+      </div>
+      <div>
+        <label>TX DC Offset (0–255)</label>
+        <input type="number" id="cal-tx-dc-offset" min="0" max="255" value="0" placeholder="0">
+        <p class="hint">Removes DC bias from TX path.</p>
+      </div>
+      <div>
+        <label>DMR TX Delay (0–10 ms)</label>
+        <input type="number" id="cal-dmr-delay" min="0" max="10" value="0" placeholder="0">
+        <p class="hint">Delay before DMR transmission.</p>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn" onclick="saveCalibration()">Save Calibration</button>
+    </div>
+  </div>
+  <div class="card" style="margin-top:1rem">
     <div class="card-title">Configuration Backup</div>
     <p style="color:#94a3b8;font-size:.875rem;margin-bottom:1rem">Export your full configuration as a JSON file or restore from a previous backup.</p>
     <div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center">
@@ -2073,6 +2117,14 @@ function loadHotspot(){
     document.getElementById('ysf-wiresx-passthrough').checked=d.ysf.wiresxPassthrough||false;
     document.getElementById('ysf2dmr-enabled').checked=d.crossMode.ysf2dmrEnabled;
     document.getElementById('ysf2dmr-tg').value=d.crossMode.ysf2dmrTalkgroup||'';
+    // Populate calibration fields from modem config
+    document.getElementById('cal-rx-offset').value=modem.rxOffset||0;
+    document.getElementById('cal-tx-offset').value=modem.txOffset||0;
+    document.getElementById('cal-rx-level').value=modem.rxLevel||50;
+    document.getElementById('cal-tx-level').value=modem.txLevel||50;
+    document.getElementById('cal-rx-dc-offset').value=modem.rxDcOffset||0;
+    document.getElementById('cal-tx-dc-offset').value=modem.txDcOffset||0;
+    document.getElementById('cal-dmr-delay').value=modem.dmrDelay||0;
   }).catch(function(e){console.error('loadHotspot failed:',e);});
 }
 function renderTalkgroups(){
@@ -2226,6 +2278,18 @@ function saveDevice(){
     qrzUsername:document.getElementById('dev-qrz-user').value,
     qrzPassword:document.getElementById('dev-qrz-pass').value};
   openrig.updateConfig(body).then(function(){toast('Device config saved');openrig.getStatus().then(renderStatus).catch(function(){});}).catch(function(e){toast(e.message,true);});
+}
+function saveCalibration(){
+  var cal={
+    rxOffset:parseInt(document.getElementById('cal-rx-offset').value)||0,
+    txOffset:parseInt(document.getElementById('cal-tx-offset').value)||0,
+    rxLevel:parseInt(document.getElementById('cal-rx-level').value)||50,
+    txLevel:parseInt(document.getElementById('cal-tx-level').value)||50,
+    rxDcOffset:parseInt(document.getElementById('cal-rx-dc-offset').value)||0,
+    txDcOffset:parseInt(document.getElementById('cal-tx-dc-offset').value)||0,
+    dmrDelay:parseInt(document.getElementById('cal-dmr-delay').value)||0
+  };
+  openrig.updateModemCalibration(cal).then(function(){toast('Calibration saved');}).catch(function(e){toast(e.message,true);});
 }
 function esc(s){if(!s)return'';var d=document.createElement('div');d.appendChild(document.createTextNode(s));return d.innerHTML;}
 function renderHotspotStatus(d){
