@@ -1705,7 +1705,7 @@ func (s *hotspotServer) UpdateModemCalibration(_ context.Context, req *connect.R
 	}
 
 	if !devMode {
-		go exec.Command("/usr/local/lib/openrig/mmdvm-update.sh").Run()
+		go exec.Command("/usr/local/lib/openrig/mmdvm-update.sh", "--calibration").Run()
 	} else {
 		log.Printf("[dev] UpdateModemCalibration: rx_offset=%d tx_offset=%d rx_level=%d tx_level=%d rx_dc_offset=%d tx_dc_offset=%d dmr_delay=%d",
 			cal.RxOffset, cal.TxOffset, cal.RxLevel, cal.TxLevel, cal.RxDcOffset, cal.TxDcOffset, cal.DmrDelay)
@@ -1840,7 +1840,7 @@ func (s *hotspotServer) AdjustCalibration(_ context.Context, req *connect.Reques
 	}
 
 	if !devMode {
-		go exec.Command("/usr/local/lib/openrig/mmdvm-update.sh").Run()
+		go exec.Command("/usr/local/lib/openrig/mmdvm-update.sh", "--calibration").Run()
 	} else {
 		log.Printf("[dev] AdjustCalibration: rx_offset=%d tx_offset=%d rx_level=%d tx_level=%d rx_dc=%d tx_dc=%d delay=%d",
 			rxOffset, txOffset, rxLevel, txLevel, rxDcOffset, txDcOffset, dmrDelay)

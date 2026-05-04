@@ -13,6 +13,13 @@ LOG_TAG="openrig-mmdvm-update"
 
 log() { logger -t "$LOG_TAG" "$*" 2>/dev/null; echo "[mmdvm-update] $*"; }
 
+# --calibration: update MMDVM.ini and restart only MMDVMHost (not gateways).
+# Used by the calibration tool so the device stays unlinked during adjustment.
+CALIBRATION_ONLY=0
+for arg in "$@"; do
+    [ "$arg" = "--calibration" ] && CALIBRATION_ONLY=1
+done
+
 if [ ! -f "$MMDVM_INI" ]; then
     log "No MMDVM.ini found — skipping."
     exit 0
@@ -205,14 +212,16 @@ if systemctl is-active --quiet openrig-mmdvmhost 2>/dev/null; then
     systemctl restart openrig-mmdvmhost
 fi
 
-if systemctl is-active --quiet openrig-dmrgateway 2>/dev/null; then
-    log "Restarting openrig-dmrgateway..."
-    systemctl restart openrig-dmrgateway
-fi
+if [ "$CALIBRATION_ONLY" -eq 0 ]; then
+    if systemctl is-active --quiet openrig-dmrgateway 2>/dev/null; then
+        log "Restarting openrig-dmrgateway..."
+        systemctl restart openrig-dmrgateway
+    fi
 
-if systemctl is-active --quiet openrig-ysfgateway 2>/dev/null; then
-    log "Restarting openrig-ysfgateway..."
-    systemctl restart openrig-ysfgateway
+    if systemctl is-active --quiet openrig-ysfgateway 2>/dev/null; then
+        log "Restarting openrig-ysfgateway..."
+        systemctl restart openrig-ysfgateway
+    fi
 fi
 
 log "Done."
