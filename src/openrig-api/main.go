@@ -206,6 +206,15 @@ func getFloat(m map[string]any, path string) float64 {
 	return v
 }
 
+func getFloatDefault(m map[string]any, path string, fallback float64) float64 {
+	v, ok := nestedGet(m, path).(float64)
+	if !ok {
+		return fallback
+	}
+	return v
+}
+
+
 // ── System helpers ───────────────────────────────────────────────────────
 
 type systemMetrics struct {
@@ -809,8 +818,15 @@ func buildHotspotConfig(cfg map[string]any) *openrigv1.HotspotConfig {
 			Dmr2YsfRoom:      getString(cfg, "openrig.hotspot.cross_mode.dmr2ysf_room", ""),
 		},
 		Modem: &openrigv1.ModemConfig{
-			Type: getString(cfg, "openrig.hotspot.modem.type", "mmdvm_hs_hat"),
-			Port: getString(cfg, "openrig.hotspot.modem.port", "/dev/ttyAMA0"),
+			Type:        getString(cfg, "openrig.hotspot.modem.type", "mmdvm_hs_hat"),
+			Port:        getString(cfg, "openrig.hotspot.modem.port", "/dev/ttyAMA0"),
+			RxOffset:    int32(getFloat(cfg, "openrig.hotspot.modem.rx_offset")),
+			TxOffset:    int32(getFloat(cfg, "openrig.hotspot.modem.tx_offset")),
+			RxDcOffset:  int32(getFloat(cfg, "openrig.hotspot.modem.rx_dc_offset")),
+			TxDcOffset:  int32(getFloat(cfg, "openrig.hotspot.modem.tx_dc_offset")),
+			RxLevel:     int32(getFloatDefault(cfg, "openrig.hotspot.modem.rx_level", 50)),
+			TxLevel:     int32(getFloatDefault(cfg, "openrig.hotspot.modem.tx_level", 50)),
+			DmrDelay:    int32(getFloat(cfg, "openrig.hotspot.modem.dmr_delay")),
 		},
 		RfFrequency: getFloat(cfg, "openrig.hotspot.rf_frequency"),
 		TxFrequency: getFloat(cfg, "openrig.hotspot.tx_frequency"),
@@ -902,6 +918,60 @@ var (
 	ysfLinkState = "unlinked" // "linking"|"linked"|"unlinked"
 )
 
+// ── BER broadcast for StreamCalibration ──────────────────────────────────
+
+// berReading is a single completed-transmission BER value from MMDVMHost.
+type berReading struct {
+	BER  float64
+	Mode string
+}
+
+var (
+	berSubsMu sync.Mutex
+	berSubs   []chan berReading
+)
+
+// publishBER fans out a new BER reading to all active StreamCalibration clients.
+func publishBER(ber float64, mode string) {
+	r := berReading{BER: ber, Mode: mode}
+	berSubsMu.Lock()
+	defer berSubsMu.Unlock()
+	for _, ch := range berSubs {
+		select {
+		case ch <- r:
+		default: // skip slow consumers rather than blocking
+		}
+	}
+}
+
+// berSubsBufferSize is the per-subscriber channel buffer for BER fan-out.
+// It allows a small burst of readings to queue without blocking the MQTT
+// goroutine, while still dropping data for genuinely slow consumers.
+const berSubsBufferSize = 8
+
+// subscribeBER registers a new StreamCalibration subscriber and returns its channel.
+func subscribeBER() chan berReading {
+	ch := make(chan berReading, berSubsBufferSize)
+	berSubsMu.Lock()
+	berSubs = append(berSubs, ch)
+	berSubsMu.Unlock()
+	return ch
+}
+
+// unsubscribeBER removes the channel from the subscriber list and closes it.
+func unsubscribeBER(ch chan berReading) {
+	berSubsMu.Lock()
+	// Iterate backwards so the removal doesn't disturb unvisited indices.
+	for i := len(berSubs) - 1; i >= 0; i-- {
+		if berSubs[i] == ch {
+			berSubs = append(berSubs[:i], berSubs[i+1:]...)
+			break
+		}
+	}
+	berSubsMu.Unlock()
+	close(ch)
+}
+
 // mqttLastHeard returns a snapshot of the in-memory last-heard list.
 func mqttLastHeard() []*openrigv1.LastHeardEntry {
 	lastHeardMu.RLock()
@@ -984,6 +1054,10 @@ func processMQTTPayload(payload []byte) {
 			entry.Duration = fmt.Sprintf("%.0fs", ev.Duration)
 			entry.Loss = fmt.Sprintf("%.2f%%", ev.BER)
 			lastHeardMu.Unlock()
+			// Publish BER to any active StreamCalibration clients.
+			if ev.BER >= 0 {
+				publishBER(ev.BER, mode)
+			}
 		}
 	}
 }
@@ -1508,6 +1582,13 @@ func (s *hotspotServer) UpdateHotspot(_ context.Context, req *connect.Request[op
 	if hc.Modem != nil {
 		nested(cfg, "openrig.hotspot.modem.type", hc.Modem.Type)
 		nested(cfg, "openrig.hotspot.modem.port", hc.Modem.Port)
+		nested(cfg, "openrig.hotspot.modem.rx_offset", int(hc.Modem.RxOffset))
+		nested(cfg, "openrig.hotspot.modem.tx_offset", int(hc.Modem.TxOffset))
+		nested(cfg, "openrig.hotspot.modem.rx_dc_offset", int(hc.Modem.RxDcOffset))
+		nested(cfg, "openrig.hotspot.modem.tx_dc_offset", int(hc.Modem.TxDcOffset))
+		nested(cfg, "openrig.hotspot.modem.rx_level", int(hc.Modem.RxLevel))
+		nested(cfg, "openrig.hotspot.modem.tx_level", int(hc.Modem.TxLevel))
+		nested(cfg, "openrig.hotspot.modem.dmr_delay", int(hc.Modem.DmrDelay))
 	}
 
 	if err := writeConfig(cfg); err != nil {
@@ -1581,6 +1662,201 @@ func (s *hotspotServer) UpdateDmrId(_ context.Context, req *connect.Request[open
 	}
 
 	return connect.NewResponse(&openrigv1.UpdateDmrIdResponse{}), nil
+}
+
+func (s *hotspotServer) UpdateModemCalibration(_ context.Context, req *connect.Request[openrigv1.UpdateModemCalibrationRequest]) (*connect.Response[openrigv1.UpdateModemCalibrationResponse], error) {
+	cal := req.Msg.Calibration
+	if cal == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("calibration is required"))
+	}
+
+	// Validate ranges
+	if cal.RxLevel < 0 || cal.RxLevel > 100 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("rx_level must be 0–100"))
+	}
+	if cal.TxLevel < 0 || cal.TxLevel > 100 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("tx_level must be 0–100"))
+	}
+	if cal.RxDcOffset < 0 || cal.RxDcOffset > 255 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("rx_dc_offset must be 0–255"))
+	}
+	if cal.TxDcOffset < 0 || cal.TxDcOffset > 255 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("tx_dc_offset must be 0–255"))
+	}
+	if cal.DmrDelay < 0 || cal.DmrDelay > 10 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("dmr_delay must be 0–10"))
+	}
+
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config: %w", err))
+	}
+
+	nested(cfg, "openrig.hotspot.modem.rx_offset", int(cal.RxOffset))
+	nested(cfg, "openrig.hotspot.modem.tx_offset", int(cal.TxOffset))
+	nested(cfg, "openrig.hotspot.modem.rx_dc_offset", int(cal.RxDcOffset))
+	nested(cfg, "openrig.hotspot.modem.tx_dc_offset", int(cal.TxDcOffset))
+	nested(cfg, "openrig.hotspot.modem.rx_level", int(cal.RxLevel))
+	nested(cfg, "openrig.hotspot.modem.tx_level", int(cal.TxLevel))
+	nested(cfg, "openrig.hotspot.modem.dmr_delay", int(cal.DmrDelay))
+
+	if err := writeConfig(cfg); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write config: %w", err))
+	}
+
+	if !devMode {
+		go exec.Command("/usr/local/lib/openrig/mmdvm-update.sh", "--calibration").Run()
+	} else {
+		log.Printf("[dev] UpdateModemCalibration: rx_offset=%d tx_offset=%d rx_level=%d tx_level=%d rx_dc_offset=%d tx_dc_offset=%d dmr_delay=%d",
+			cal.RxOffset, cal.TxOffset, cal.RxLevel, cal.TxLevel, cal.RxDcOffset, cal.TxDcOffset, cal.DmrDelay)
+	}
+
+	return connect.NewResponse(&openrigv1.UpdateModemCalibrationResponse{
+		Calibration: cal,
+	}), nil
+}
+
+// currentCalibration reads calibration values from the config and returns them as a proto message.
+func currentCalibration() *openrigv1.ModemCalibration {
+	cfg, err := readConfig()
+	if err != nil {
+		return &openrigv1.ModemCalibration{}
+	}
+	return &openrigv1.ModemCalibration{
+		RxOffset:   int32(getFloat(cfg, "openrig.hotspot.modem.rx_offset")),
+		TxOffset:   int32(getFloat(cfg, "openrig.hotspot.modem.tx_offset")),
+		RxDcOffset: int32(getFloat(cfg, "openrig.hotspot.modem.rx_dc_offset")),
+		TxDcOffset: int32(getFloat(cfg, "openrig.hotspot.modem.tx_dc_offset")),
+		RxLevel:    int32(getFloatDefault(cfg, "openrig.hotspot.modem.rx_level", 50)),
+		TxLevel:    int32(getFloatDefault(cfg, "openrig.hotspot.modem.tx_level", 50)),
+		DmrDelay:   int32(getFloat(cfg, "openrig.hotspot.modem.dmr_delay")),
+	}
+}
+
+// StreamCalibration streams live BER readings sourced from the MQTT feed.
+// MMDVMHost publishes BER as part of its end/lost transmission events on the
+// local MQTT broker — the same source used for the last-heard list.
+// Each reading is sent to all connected StreamCalibration clients via the
+// berSubs fan-out channel established by subscribeBER/unsubscribeBER.
+func (s *hotspotServer) StreamCalibration(ctx context.Context, _ *connect.Request[openrigv1.Empty], stream *connect.ServerStream[openrigv1.CalibrationReading]) error {
+	if devMode {
+		return streamCalibrationDev(ctx, stream)
+	}
+
+	ch := subscribeBER()
+	defer unsubscribeBER(ch)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case r, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if err := stream.Send(&openrigv1.CalibrationReading{
+				BerPercent: r.BER,
+				Mode:       r.Mode,
+				Current:    currentCalibration(),
+			}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// streamCalibrationDev streams simulated BER data for local development/testing.
+func streamCalibrationDev(ctx context.Context, stream *connect.ServerStream[openrigv1.CalibrationReading]) error {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	modes := []string{"DMR", "YSF", "idle"}
+	i := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			// Simulate varying BER: 0.1%–3.5% cycling
+			ber := 0.5 + float64(i%20)*0.15
+			mode := modes[i%len(modes)]
+			if err := stream.Send(&openrigv1.CalibrationReading{
+				BerPercent: ber,
+				Mode:       mode,
+				Current:    currentCalibration(),
+			}); err != nil {
+				return err
+			}
+			i++
+		}
+	}
+}
+
+func (s *hotspotServer) AdjustCalibration(_ context.Context, req *connect.Request[openrigv1.AdjustCalibrationRequest]) (*connect.Response[openrigv1.AdjustCalibrationResponse], error) {
+	d := req.Msg
+
+	cfg, err := readConfig()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config: %w", err))
+	}
+
+	// Read current values.
+	rxOffset := int32(getFloat(cfg, "openrig.hotspot.modem.rx_offset"))
+	txOffset := int32(getFloat(cfg, "openrig.hotspot.modem.tx_offset"))
+	rxDcOffset := int32(getFloat(cfg, "openrig.hotspot.modem.rx_dc_offset"))
+	txDcOffset := int32(getFloat(cfg, "openrig.hotspot.modem.tx_dc_offset"))
+	rxLevel := int32(getFloatDefault(cfg, "openrig.hotspot.modem.rx_level", 50))
+	txLevel := int32(getFloatDefault(cfg, "openrig.hotspot.modem.tx_level", 50))
+	dmrDelay := int32(getFloat(cfg, "openrig.hotspot.modem.dmr_delay"))
+
+	// Apply deltas with clamping.
+	clamp := func(v, lo, hi int32) int32 {
+		if v < lo {
+			return lo
+		}
+		if v > hi {
+			return hi
+		}
+		return v
+	}
+	rxOffset = clamp(rxOffset+d.RxOffsetDelta, -9999, 9999)
+	txOffset = clamp(txOffset+d.TxOffsetDelta, -9999, 9999)
+	rxDcOffset = clamp(rxDcOffset+d.RxDcOffsetDelta, 0, 255)
+	txDcOffset = clamp(txDcOffset+d.TxDcOffsetDelta, 0, 255)
+	rxLevel = clamp(rxLevel+d.RxLevelDelta, 0, 100)
+	txLevel = clamp(txLevel+d.TxLevelDelta, 0, 100)
+	dmrDelay = clamp(dmrDelay+d.DmrDelayDelta, 0, 10)
+
+	// Persist.
+	nested(cfg, "openrig.hotspot.modem.rx_offset", int(rxOffset))
+	nested(cfg, "openrig.hotspot.modem.tx_offset", int(txOffset))
+	nested(cfg, "openrig.hotspot.modem.rx_dc_offset", int(rxDcOffset))
+	nested(cfg, "openrig.hotspot.modem.tx_dc_offset", int(txDcOffset))
+	nested(cfg, "openrig.hotspot.modem.rx_level", int(rxLevel))
+	nested(cfg, "openrig.hotspot.modem.tx_level", int(txLevel))
+	nested(cfg, "openrig.hotspot.modem.dmr_delay", int(dmrDelay))
+
+	if err := writeConfig(cfg); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot write config: %w", err))
+	}
+
+	if !devMode {
+		go exec.Command("/usr/local/lib/openrig/mmdvm-update.sh", "--calibration").Run()
+	} else {
+		log.Printf("[dev] AdjustCalibration: rx_offset=%d tx_offset=%d rx_level=%d tx_level=%d rx_dc=%d tx_dc=%d delay=%d",
+			rxOffset, txOffset, rxLevel, txLevel, rxDcOffset, txDcOffset, dmrDelay)
+	}
+
+	return connect.NewResponse(&openrigv1.AdjustCalibrationResponse{
+		Current: &openrigv1.ModemCalibration{
+			RxOffset:   rxOffset,
+			TxOffset:   txOffset,
+			RxDcOffset: rxDcOffset,
+			TxDcOffset: txDcOffset,
+			RxLevel:    rxLevel,
+			TxLevel:    txLevel,
+			DmrDelay:   dmrDelay,
+		},
+	}), nil
 }
 
 func (s *hotspotServer) GetServers(_ context.Context, req *connect.Request[openrigv1.GetServersRequest]) (*connect.Response[openrigv1.GetServersResponse], error) {

@@ -13,6 +13,13 @@ LOG_TAG="openrig-mmdvm-update"
 
 log() { logger -t "$LOG_TAG" "$*" 2>/dev/null; echo "[mmdvm-update] $*"; }
 
+# --calibration: update MMDVM.ini and restart only MMDVMHost (not gateways).
+# Used by the calibration tool so the device stays unlinked during adjustment.
+CALIBRATION_ONLY=0
+for arg in "$@"; do
+    [ "$arg" = "--calibration" ] && CALIBRATION_ONLY=1
+done
+
 if [ ! -f "$MMDVM_INI" ]; then
     log "No MMDVM.ini found — skipping."
     exit 0
@@ -32,6 +39,15 @@ DMR_ENABLED=$(jq -r 'if .openrig.hotspot.dmr.enabled then "1" else "0" end' "$OP
 YSF_ENABLED=$(jq -r 'if .openrig.hotspot.ysf.enabled then "1" else "0" end' "$OPENRIG_JSON")
 MODEM_PORT=$(jq -r '.openrig.hotspot.modem.port // "/dev/ttyAMA0"' "$OPENRIG_JSON")
 MODEM_SPEED=$(jq -r '.openrig.hotspot.modem.speed // 115200' "$OPENRIG_JSON")
+
+# Modem calibration values (with MMDVM defaults)
+RX_OFFSET=$(jq -r '.openrig.hotspot.modem.rx_offset // 0' "$OPENRIG_JSON")
+TX_OFFSET=$(jq -r '.openrig.hotspot.modem.tx_offset // 0' "$OPENRIG_JSON")
+RX_DC_OFFSET=$(jq -r '.openrig.hotspot.modem.rx_dc_offset // 0' "$OPENRIG_JSON")
+TX_DC_OFFSET=$(jq -r '.openrig.hotspot.modem.tx_dc_offset // 0' "$OPENRIG_JSON")
+RX_LEVEL=$(jq -r '.openrig.hotspot.modem.rx_level // 50' "$OPENRIG_JSON")
+TX_LEVEL=$(jq -r '.openrig.hotspot.modem.tx_level // 50' "$OPENRIG_JSON")
+DMR_DELAY=$(jq -r '.openrig.hotspot.modem.dmr_delay // 0' "$OPENRIG_JSON")
 
 # DMR ID: use operator-level if > 0, otherwise fall back to hotspot-level
 DMR_ID=$(jq -r '
@@ -75,6 +91,7 @@ fi
 
 # ── MMDVM.ini ─────────────────────────────────────────────────────────────
 log "Updating MMDVM.ini: callsign=${CALLSIGN} colorcode=${COLORCODE} DMR=${DMR_ENABLED} YSF=${YSF_ENABLED}"
+log "Modem calibration: rx_offset=${RX_OFFSET} tx_offset=${TX_OFFSET} rx_level=${RX_LEVEL} tx_level=${TX_LEVEL} rx_dc_offset=${RX_DC_OFFSET} tx_dc_offset=${TX_DC_OFFSET} dmr_delay=${DMR_DELAY}"
 
 # Apply values using sed (first-run placeholder replacement)
 sed -i \
@@ -99,10 +116,14 @@ if [ "$DMR_ID" != "0" ] && [ -n "$DMR_ID" ]; then
     sed -i "s|^Id=.*|Id=${DMR_ID}|" "$MMDVM_INI"
 fi
 
-# Section-aware updates for enable flags, modem, frequencies
+# Section-aware updates for enable flags, modem, frequencies, and calibration
 awk -v dmr="$DMR_ENABLED" -v ysf="$YSF_ENABLED" \
     -v port="$MODEM_PORT" -v speed="$MODEM_SPEED" \
-    -v rxf="$RX_FREQ" -v txf="$TX_FREQ" '
+    -v rxf="$RX_FREQ" -v txf="$TX_FREQ" \
+    -v rx_offset="$RX_OFFSET" -v tx_offset="$TX_OFFSET" \
+    -v rx_dc_offset="$RX_DC_OFFSET" -v tx_dc_offset="$TX_DC_OFFSET" \
+    -v rx_level="$RX_LEVEL" -v tx_level="$TX_LEVEL" \
+    -v dmr_delay="$DMR_DELAY" '
     /^\[/ { section = $0 }
     /^Enable=/ && (section == "[DMR]" || section == "[DMR Network]") { $0 = "Enable=" dmr }
     /^Enable=/ && (section == "[System Fusion]" || section == "[System Fusion Network]") { $0 = "Enable=" ysf }
@@ -110,6 +131,13 @@ awk -v dmr="$DMR_ENABLED" -v ysf="$YSF_ENABLED" \
     /^UARTSpeed=/ && section == "[Modem]" { $0 = "UARTSpeed=" speed }
     /^RXFrequency=/ && (section == "[Info]" || section == "[Modem]") { $0 = "RXFrequency=" rxf }
     /^TXFrequency=/ && (section == "[Info]" || section == "[Modem]") { $0 = "TXFrequency=" txf }
+    /^RXOffset=/ && section == "[Modem]" { $0 = "RXOffset=" rx_offset }
+    /^TXOffset=/ && section == "[Modem]" { $0 = "TXOffset=" tx_offset }
+    /^RXDCOffset=/ && section == "[Modem]" { $0 = "RXDCOffset=" rx_dc_offset }
+    /^TXDCOffset=/ && section == "[Modem]" { $0 = "TXDCOffset=" tx_dc_offset }
+    /^RXLevel=/ && section == "[Modem]" { $0 = "RXLevel=" rx_level }
+    /^TXLevel=/ && section == "[Modem]" { $0 = "TXLevel=" tx_level }
+    /^DMRDelay=/ && section == "[Modem]" { $0 = "DMRDelay=" dmr_delay }
     { print }
 ' "$MMDVM_INI" > "${MMDVM_INI}.tmp" && mv "${MMDVM_INI}.tmp" "$MMDVM_INI"
 
@@ -184,14 +212,16 @@ if systemctl is-active --quiet openrig-mmdvmhost 2>/dev/null; then
     systemctl restart openrig-mmdvmhost
 fi
 
-if systemctl is-active --quiet openrig-dmrgateway 2>/dev/null; then
-    log "Restarting openrig-dmrgateway..."
-    systemctl restart openrig-dmrgateway
-fi
+if [ "$CALIBRATION_ONLY" -eq 0 ]; then
+    if systemctl is-active --quiet openrig-dmrgateway 2>/dev/null; then
+        log "Restarting openrig-dmrgateway..."
+        systemctl restart openrig-dmrgateway
+    fi
 
-if systemctl is-active --quiet openrig-ysfgateway 2>/dev/null; then
-    log "Restarting openrig-ysfgateway..."
-    systemctl restart openrig-ysfgateway
+    if systemctl is-active --quiet openrig-ysfgateway 2>/dev/null; then
+        log "Restarting openrig-ysfgateway..."
+        systemctl restart openrig-ysfgateway
+    fi
 fi
 
 log "Done."

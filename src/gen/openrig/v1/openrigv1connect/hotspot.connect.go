@@ -51,6 +51,15 @@ const (
 	// HotspotServiceStreamLastHeardProcedure is the fully-qualified name of the HotspotService's
 	// StreamLastHeard RPC.
 	HotspotServiceStreamLastHeardProcedure = "/openrig.v1.HotspotService/StreamLastHeard"
+	// HotspotServiceUpdateModemCalibrationProcedure is the fully-qualified name of the HotspotService's
+	// UpdateModemCalibration RPC.
+	HotspotServiceUpdateModemCalibrationProcedure = "/openrig.v1.HotspotService/UpdateModemCalibration"
+	// HotspotServiceStreamCalibrationProcedure is the fully-qualified name of the HotspotService's
+	// StreamCalibration RPC.
+	HotspotServiceStreamCalibrationProcedure = "/openrig.v1.HotspotService/StreamCalibration"
+	// HotspotServiceAdjustCalibrationProcedure is the fully-qualified name of the HotspotService's
+	// AdjustCalibration RPC.
+	HotspotServiceAdjustCalibrationProcedure = "/openrig.v1.HotspotService/AdjustCalibration"
 )
 
 // HotspotServiceClient is a client for the openrig.v1.HotspotService service.
@@ -64,6 +73,14 @@ type HotspotServiceClient interface {
 	LookupCallsign(context.Context, *connect.Request[v1.LookupCallsignRequest]) (*connect.Response[v1.CallsignInfo], error)
 	// StreamLastHeard streams new last-heard entries as they appear.
 	StreamLastHeard(context.Context, *connect.Request[v1.Empty]) (*connect.ServerStreamForClient[v1.LastHeardEntry], error)
+	// UpdateModemCalibration updates MMDVM modem calibration values (offsets, levels, delay).
+	UpdateModemCalibration(context.Context, *connect.Request[v1.UpdateModemCalibrationRequest]) (*connect.Response[v1.UpdateModemCalibrationResponse], error)
+	// StreamCalibration streams live BER readings from the MMDVMHost log.
+	// Readings arrive whenever MMDVMHost logs a completed transmission BER line.
+	StreamCalibration(context.Context, *connect.Request[v1.Empty]) (*connect.ServerStreamForClient[v1.CalibrationReading], error)
+	// AdjustCalibration applies incremental deltas to the current calibration,
+	// persists them, and triggers mmdvm-update.sh.
+	AdjustCalibration(context.Context, *connect.Request[v1.AdjustCalibrationRequest]) (*connect.Response[v1.AdjustCalibrationResponse], error)
 }
 
 // NewHotspotServiceClient constructs a client for the openrig.v1.HotspotService service. By
@@ -113,17 +130,38 @@ func NewHotspotServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(hotspotServiceMethods.ByName("StreamLastHeard")),
 			connect.WithClientOptions(opts...),
 		),
+		updateModemCalibration: connect.NewClient[v1.UpdateModemCalibrationRequest, v1.UpdateModemCalibrationResponse](
+			httpClient,
+			baseURL+HotspotServiceUpdateModemCalibrationProcedure,
+			connect.WithSchema(hotspotServiceMethods.ByName("UpdateModemCalibration")),
+			connect.WithClientOptions(opts...),
+		),
+		streamCalibration: connect.NewClient[v1.Empty, v1.CalibrationReading](
+			httpClient,
+			baseURL+HotspotServiceStreamCalibrationProcedure,
+			connect.WithSchema(hotspotServiceMethods.ByName("StreamCalibration")),
+			connect.WithClientOptions(opts...),
+		),
+		adjustCalibration: connect.NewClient[v1.AdjustCalibrationRequest, v1.AdjustCalibrationResponse](
+			httpClient,
+			baseURL+HotspotServiceAdjustCalibrationProcedure,
+			connect.WithSchema(hotspotServiceMethods.ByName("AdjustCalibration")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // hotspotServiceClient implements HotspotServiceClient.
 type hotspotServiceClient struct {
-	getHotspot      *connect.Client[v1.Empty, v1.HotspotConfig]
-	updateHotspot   *connect.Client[v1.UpdateHotspotRequest, v1.HotspotConfig]
-	updateDmrId     *connect.Client[v1.UpdateDmrIdRequest, v1.UpdateDmrIdResponse]
-	getServers      *connect.Client[v1.GetServersRequest, v1.GetServersResponse]
-	lookupCallsign  *connect.Client[v1.LookupCallsignRequest, v1.CallsignInfo]
-	streamLastHeard *connect.Client[v1.Empty, v1.LastHeardEntry]
+	getHotspot             *connect.Client[v1.Empty, v1.HotspotConfig]
+	updateHotspot          *connect.Client[v1.UpdateHotspotRequest, v1.HotspotConfig]
+	updateDmrId            *connect.Client[v1.UpdateDmrIdRequest, v1.UpdateDmrIdResponse]
+	getServers             *connect.Client[v1.GetServersRequest, v1.GetServersResponse]
+	lookupCallsign         *connect.Client[v1.LookupCallsignRequest, v1.CallsignInfo]
+	streamLastHeard        *connect.Client[v1.Empty, v1.LastHeardEntry]
+	updateModemCalibration *connect.Client[v1.UpdateModemCalibrationRequest, v1.UpdateModemCalibrationResponse]
+	streamCalibration      *connect.Client[v1.Empty, v1.CalibrationReading]
+	adjustCalibration      *connect.Client[v1.AdjustCalibrationRequest, v1.AdjustCalibrationResponse]
 }
 
 // GetHotspot calls openrig.v1.HotspotService.GetHotspot.
@@ -156,6 +194,21 @@ func (c *hotspotServiceClient) StreamLastHeard(ctx context.Context, req *connect
 	return c.streamLastHeard.CallServerStream(ctx, req)
 }
 
+// UpdateModemCalibration calls openrig.v1.HotspotService.UpdateModemCalibration.
+func (c *hotspotServiceClient) UpdateModemCalibration(ctx context.Context, req *connect.Request[v1.UpdateModemCalibrationRequest]) (*connect.Response[v1.UpdateModemCalibrationResponse], error) {
+	return c.updateModemCalibration.CallUnary(ctx, req)
+}
+
+// StreamCalibration calls openrig.v1.HotspotService.StreamCalibration.
+func (c *hotspotServiceClient) StreamCalibration(ctx context.Context, req *connect.Request[v1.Empty]) (*connect.ServerStreamForClient[v1.CalibrationReading], error) {
+	return c.streamCalibration.CallServerStream(ctx, req)
+}
+
+// AdjustCalibration calls openrig.v1.HotspotService.AdjustCalibration.
+func (c *hotspotServiceClient) AdjustCalibration(ctx context.Context, req *connect.Request[v1.AdjustCalibrationRequest]) (*connect.Response[v1.AdjustCalibrationResponse], error) {
+	return c.adjustCalibration.CallUnary(ctx, req)
+}
+
 // HotspotServiceHandler is an implementation of the openrig.v1.HotspotService service.
 type HotspotServiceHandler interface {
 	GetHotspot(context.Context, *connect.Request[v1.Empty]) (*connect.Response[v1.HotspotConfig], error)
@@ -167,6 +220,14 @@ type HotspotServiceHandler interface {
 	LookupCallsign(context.Context, *connect.Request[v1.LookupCallsignRequest]) (*connect.Response[v1.CallsignInfo], error)
 	// StreamLastHeard streams new last-heard entries as they appear.
 	StreamLastHeard(context.Context, *connect.Request[v1.Empty], *connect.ServerStream[v1.LastHeardEntry]) error
+	// UpdateModemCalibration updates MMDVM modem calibration values (offsets, levels, delay).
+	UpdateModemCalibration(context.Context, *connect.Request[v1.UpdateModemCalibrationRequest]) (*connect.Response[v1.UpdateModemCalibrationResponse], error)
+	// StreamCalibration streams live BER readings from the MMDVMHost log.
+	// Readings arrive whenever MMDVMHost logs a completed transmission BER line.
+	StreamCalibration(context.Context, *connect.Request[v1.Empty], *connect.ServerStream[v1.CalibrationReading]) error
+	// AdjustCalibration applies incremental deltas to the current calibration,
+	// persists them, and triggers mmdvm-update.sh.
+	AdjustCalibration(context.Context, *connect.Request[v1.AdjustCalibrationRequest]) (*connect.Response[v1.AdjustCalibrationResponse], error)
 }
 
 // NewHotspotServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -212,6 +273,24 @@ func NewHotspotServiceHandler(svc HotspotServiceHandler, opts ...connect.Handler
 		connect.WithSchema(hotspotServiceMethods.ByName("StreamLastHeard")),
 		connect.WithHandlerOptions(opts...),
 	)
+	hotspotServiceUpdateModemCalibrationHandler := connect.NewUnaryHandler(
+		HotspotServiceUpdateModemCalibrationProcedure,
+		svc.UpdateModemCalibration,
+		connect.WithSchema(hotspotServiceMethods.ByName("UpdateModemCalibration")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hotspotServiceStreamCalibrationHandler := connect.NewServerStreamHandler(
+		HotspotServiceStreamCalibrationProcedure,
+		svc.StreamCalibration,
+		connect.WithSchema(hotspotServiceMethods.ByName("StreamCalibration")),
+		connect.WithHandlerOptions(opts...),
+	)
+	hotspotServiceAdjustCalibrationHandler := connect.NewUnaryHandler(
+		HotspotServiceAdjustCalibrationProcedure,
+		svc.AdjustCalibration,
+		connect.WithSchema(hotspotServiceMethods.ByName("AdjustCalibration")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/openrig.v1.HotspotService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case HotspotServiceGetHotspotProcedure:
@@ -226,6 +305,12 @@ func NewHotspotServiceHandler(svc HotspotServiceHandler, opts ...connect.Handler
 			hotspotServiceLookupCallsignHandler.ServeHTTP(w, r)
 		case HotspotServiceStreamLastHeardProcedure:
 			hotspotServiceStreamLastHeardHandler.ServeHTTP(w, r)
+		case HotspotServiceUpdateModemCalibrationProcedure:
+			hotspotServiceUpdateModemCalibrationHandler.ServeHTTP(w, r)
+		case HotspotServiceStreamCalibrationProcedure:
+			hotspotServiceStreamCalibrationHandler.ServeHTTP(w, r)
+		case HotspotServiceAdjustCalibrationProcedure:
+			hotspotServiceAdjustCalibrationHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -257,4 +342,16 @@ func (UnimplementedHotspotServiceHandler) LookupCallsign(context.Context, *conne
 
 func (UnimplementedHotspotServiceHandler) StreamLastHeard(context.Context, *connect.Request[v1.Empty], *connect.ServerStream[v1.LastHeardEntry]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("openrig.v1.HotspotService.StreamLastHeard is not implemented"))
+}
+
+func (UnimplementedHotspotServiceHandler) UpdateModemCalibration(context.Context, *connect.Request[v1.UpdateModemCalibrationRequest]) (*connect.Response[v1.UpdateModemCalibrationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openrig.v1.HotspotService.UpdateModemCalibration is not implemented"))
+}
+
+func (UnimplementedHotspotServiceHandler) StreamCalibration(context.Context, *connect.Request[v1.Empty], *connect.ServerStream[v1.CalibrationReading]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("openrig.v1.HotspotService.StreamCalibration is not implemented"))
+}
+
+func (UnimplementedHotspotServiceHandler) AdjustCalibration(context.Context, *connect.Request[v1.AdjustCalibrationRequest]) (*connect.Response[v1.AdjustCalibrationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("openrig.v1.HotspotService.AdjustCalibration is not implemented"))
 }
