@@ -1403,12 +1403,17 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
   .btn-danger{background:#450a0a;color:#fca5a5;border:1px solid #7f1d1d}
   .btn-danger:hover{background:#7f1d1d}
   .btn-row{display:flex;gap:.5rem;margin-top:1rem;justify-content:flex-end}
-  .cal-btn{background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:5px;
-    padding:.3rem .55rem;font-size:.78rem;font-weight:600;cursor:pointer;transition:background .12s,color .12s;white-space:nowrap}
+  .cal-row{display:flex;align-items:center;justify-content:space-between;padding:.55rem .75rem;background:#0f172a}
+  .cal-row+.cal-row{border-top:1px solid #1e293b}
+  .cal-label{font-size:.875rem;color:#cbd5e1;font-weight:500}
+  .cal-unit{font-size:.7rem;color:#475569;margin-left:.3rem}
+  .cal-controls{display:flex;align-items:center;gap:.3rem;flex-shrink:0}
+  .cal-btn{background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:4px;
+    padding:.28rem .5rem;font-size:.78rem;font-weight:600;cursor:pointer;transition:background .12s,color .12s;white-space:nowrap;line-height:1}
   .cal-btn:hover{background:#334155;color:#f1f5f9}
   .cal-btn:active{background:#0284c7;color:#fff;border-color:#0284c7}
-  .cal-val{min-width:3.5rem;text-align:center;font-size:.9rem;font-weight:700;color:#f1f5f9;
-    background:#0f172a;border:1px solid #334155;border-radius:5px;padding:.25rem .5rem;display:inline-block}
+  .cal-val{min-width:3.75rem;text-align:center;font-size:.9rem;font-weight:700;color:#f1f5f9;
+    background:#0a0f1a;border:1px solid #334155;border-radius:4px;padding:.25rem .4rem;display:inline-block}
   .tg-table{width:100%;border-collapse:collapse;margin-top:.75rem}
   .tg-table th{text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;
     color:#64748b;padding:.4rem .5rem;border-bottom:1px solid #334155}
@@ -1667,6 +1672,101 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
   <div class="btn-row">
     <button class="btn" onclick="saveHotspot()">Save Hotspot Config</button>
   </div>
+  <div class="card" style="margin-top:1rem">
+    <div class="card-title">Modem Calibration</div>
+    <p class="hint" style="margin-bottom:1.25rem">Adjust modem parameters in real time while monitoring live bit error rate (BER) from received signals. Lower is better — &lt;2% is excellent, &gt;5% needs attention.</p>
+    <div style="position:relative;background:#0f172a;border-radius:.5rem;height:2.5rem;overflow:hidden;border:1px solid #334155;margin-bottom:.2rem">
+      <div id="cal-ber-bar" style="position:absolute;inset:0;width:0%;background:#22c55e;transition:width .5s,background .5s"></div>
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;padding:0 .85rem;pointer-events:none">
+        <span id="cal-ber-mode" style="font-size:.7rem;font-weight:600;color:rgba(255,255,255,.55);text-transform:uppercase;letter-spacing:.06em">BER</span>
+        <span id="cal-ber-val" style="font-size:1.05rem;font-weight:800;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.9)">Waiting for signal&#x2026;</span>
+        <span style="font-size:.65rem;color:rgba(255,255,255,.3)">10%+</span>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:0 .1rem;margin-bottom:1.25rem">
+      <span style="font-size:.65rem;color:#22c55e">&lt;2% excellent</span>
+      <span style="font-size:.65rem;color:#f59e0b">2–5% marginal</span>
+      <span style="font-size:.65rem;color:#ef4444">&gt;5% poor</span>
+    </div>
+    <div style="border:1px solid #1e293b;border-radius:.5rem;overflow:hidden">
+      <div style="background:#1e293b;padding:.35rem .75rem;font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;color:#64748b;font-weight:600">Frequency</div>
+      <div class="cal-row">
+        <span class="cal-label">RX Offset<span class="cal-unit">Hz</span></span>
+        <div class="cal-controls">
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',-100)">−100</button>
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',-10)">−10</button>
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',-1)">−1</button>
+          <span id="cal-v-rx-offset" class="cal-val">0</span>
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',1)">+1</button>
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',10)">+10</button>
+          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',100)">+100</button>
+        </div>
+      </div>
+      <div class="cal-row">
+        <span class="cal-label">TX Offset<span class="cal-unit">Hz</span></span>
+        <div class="cal-controls">
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',-100)">−100</button>
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',-10)">−10</button>
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',-1)">−1</button>
+          <span id="cal-v-tx-offset" class="cal-val">0</span>
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',1)">+1</button>
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',10)">+10</button>
+          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',100)">+100</button>
+        </div>
+      </div>
+      <div style="background:#1e293b;padding:.35rem .75rem;font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;color:#64748b;font-weight:600">Audio Levels</div>
+      <div class="cal-row">
+        <span class="cal-label">RX Level<span class="cal-unit">0–100</span></span>
+        <div class="cal-controls">
+          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',-5)">−5</button>
+          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',-1)">−1</button>
+          <span id="cal-v-rx-level" class="cal-val">50</span>
+          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',1)">+1</button>
+          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',5)">+5</button>
+        </div>
+      </div>
+      <div class="cal-row">
+        <span class="cal-label">TX Level<span class="cal-unit">0–100</span></span>
+        <div class="cal-controls">
+          <button class="cal-btn" onclick="calAdjust('txLevelDelta',-5)">−5</button>
+          <button class="cal-btn" onclick="calAdjust('txLevelDelta',-1)">−1</button>
+          <span id="cal-v-tx-level" class="cal-val">50</span>
+          <button class="cal-btn" onclick="calAdjust('txLevelDelta',1)">+1</button>
+          <button class="cal-btn" onclick="calAdjust('txLevelDelta',5)">+5</button>
+        </div>
+      </div>
+      <div style="background:#1e293b;padding:.35rem .75rem;font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;color:#64748b;font-weight:600">Advanced</div>
+      <div class="cal-row">
+        <span class="cal-label">RX DC Offset<span class="cal-unit">0–255</span></span>
+        <div class="cal-controls">
+          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',-10)">−10</button>
+          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',-1)">−1</button>
+          <span id="cal-v-rx-dc-offset" class="cal-val">0</span>
+          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',1)">+1</button>
+          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',10)">+10</button>
+        </div>
+      </div>
+      <div class="cal-row">
+        <span class="cal-label">TX DC Offset<span class="cal-unit">0–255</span></span>
+        <div class="cal-controls">
+          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',-10)">−10</button>
+          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',-1)">−1</button>
+          <span id="cal-v-tx-dc-offset" class="cal-val">0</span>
+          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',1)">+1</button>
+          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',10)">+10</button>
+        </div>
+      </div>
+      <div class="cal-row">
+        <span class="cal-label">DMR TX Delay<span class="cal-unit">0–10 ms</span></span>
+        <div class="cal-controls">
+          <button class="cal-btn" onclick="calAdjust('dmrDelayDelta',-1)">−1</button>
+          <span id="cal-v-dmr-delay" class="cal-val">0</span>
+          <button class="cal-btn" onclick="calAdjust('dmrDelayDelta',1)">+1</button>
+        </div>
+      </div>
+    </div>
+    <p id="cal-apply-status" style="margin-top:.6rem;font-size:.8rem;color:#94a3b8;min-height:1.2em"></p>
+  </div>
 </div>
 
 <!-- Network Panel -->
@@ -1761,106 +1861,6 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
     <button class="btn" onclick="saveDevice()">Save Device Config</button>
   </div>
   <div class="card" style="margin-top:1rem">
-    <div class="card-title">Modem Calibration</div>
-    <p style="color:#94a3b8;font-size:.875rem;margin-bottom:1rem">Interactive calibration tool — adjust modem parameters and watch the live BER (Bit Error Rate) change in real time, just like pi-star's calibration page. Lower BER means better signal quality.</p>
-    <div id="cal-ber-section" style="margin-bottom:1.25rem">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
-        <span style="font-size:.8rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em">Live BER</span>
-        <span id="cal-ber-badge" style="font-size:.75rem;padding:.15rem .5rem;border-radius:.75rem;background:#334155;color:#94a3b8">Waiting for signal...</span>
-      </div>
-      <div style="background:#1e293b;border-radius:.5rem;height:1.5rem;overflow:hidden;border:1px solid #334155">
-        <div id="cal-ber-bar" style="height:100%;width:0%;background:#22c55e;transition:width .4s,background .4s;border-radius:.5rem"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;margin-top:.25rem">
-        <span style="font-size:.7rem;color:#475569">0%</span>
-        <span id="cal-ber-val" style="font-size:.85rem;font-weight:600;color:#f1f5f9">—</span>
-        <span style="font-size:.7rem;color:#475569">10%+</span>
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
-      <div>
-        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">RX Offset (Hz)</div>
-        <div style="display:flex;align-items:center;gap:.35rem">
-          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',-100)" title="-100 Hz">−100</button>
-          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',-10)" title="-10 Hz">−10</button>
-          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',-1)" title="-1 Hz">−1</button>
-          <span id="cal-v-rx-offset" class="cal-val">0</span>
-          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',1)" title="+1 Hz">+1</button>
-          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',10)" title="+10 Hz">+10</button>
-          <button class="cal-btn" onclick="calAdjust('rxOffsetDelta',100)" title="+100 Hz">+100</button>
-        </div>
-        <p class="hint" style="margin-top:.3rem">Compensates for RX crystal drift.</p>
-      </div>
-      <div>
-        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">TX Offset (Hz)</div>
-        <div style="display:flex;align-items:center;gap:.35rem">
-          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',-100)" title="-100 Hz">−100</button>
-          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',-10)" title="-10 Hz">−10</button>
-          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',-1)" title="-1 Hz">−1</button>
-          <span id="cal-v-tx-offset" class="cal-val">0</span>
-          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',1)" title="+1 Hz">+1</button>
-          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',10)" title="+10 Hz">+10</button>
-          <button class="cal-btn" onclick="calAdjust('txOffsetDelta',100)" title="+100 Hz">+100</button>
-        </div>
-        <p class="hint" style="margin-top:.3rem">Compensates for TX crystal drift.</p>
-      </div>
-      <div>
-        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">RX Level (0–100)</div>
-        <div style="display:flex;align-items:center;gap:.35rem">
-          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',-5)">−5</button>
-          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',-1)">−1</button>
-          <span id="cal-v-rx-level" class="cal-val">50</span>
-          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',1)">+1</button>
-          <button class="cal-btn" onclick="calAdjust('rxLevelDelta',5)">+5</button>
-        </div>
-        <p class="hint" style="margin-top:.3rem">Incoming audio gain.</p>
-      </div>
-      <div>
-        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">TX Level (0–100)</div>
-        <div style="display:flex;align-items:center;gap:.35rem">
-          <button class="cal-btn" onclick="calAdjust('txLevelDelta',-5)">−5</button>
-          <button class="cal-btn" onclick="calAdjust('txLevelDelta',-1)">−1</button>
-          <span id="cal-v-tx-level" class="cal-val">50</span>
-          <button class="cal-btn" onclick="calAdjust('txLevelDelta',1)">+1</button>
-          <button class="cal-btn" onclick="calAdjust('txLevelDelta',5)">+5</button>
-        </div>
-        <p class="hint" style="margin-top:.3rem">Outgoing audio gain.</p>
-      </div>
-      <div>
-        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">RX DC Offset (0–255)</div>
-        <div style="display:flex;align-items:center;gap:.35rem">
-          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',-10)">−10</button>
-          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',-1)">−1</button>
-          <span id="cal-v-rx-dc-offset" class="cal-val">0</span>
-          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',1)">+1</button>
-          <button class="cal-btn" onclick="calAdjust('rxDcOffsetDelta',10)">+10</button>
-        </div>
-        <p class="hint" style="margin-top:.3rem">Removes DC bias from RX path.</p>
-      </div>
-      <div>
-        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">TX DC Offset (0–255)</div>
-        <div style="display:flex;align-items:center;gap:.35rem">
-          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',-10)">−10</button>
-          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',-1)">−1</button>
-          <span id="cal-v-tx-dc-offset" class="cal-val">0</span>
-          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',1)">+1</button>
-          <button class="cal-btn" onclick="calAdjust('txDcOffsetDelta',10)">+10</button>
-        </div>
-        <p class="hint" style="margin-top:.3rem">Removes DC bias from TX path.</p>
-      </div>
-      <div>
-        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.4rem">DMR TX Delay (0–10 ms)</div>
-        <div style="display:flex;align-items:center;gap:.35rem">
-          <button class="cal-btn" onclick="calAdjust('dmrDelayDelta',-1)">−1</button>
-          <span id="cal-v-dmr-delay" class="cal-val">0</span>
-          <button class="cal-btn" onclick="calAdjust('dmrDelayDelta',1)">+1</button>
-        </div>
-        <p class="hint" style="margin-top:.3rem">Delay before DMR transmission.</p>
-      </div>
-    </div>
-    <p id="cal-apply-status" style="margin-top:.75rem;font-size:.8rem;color:#94a3b8;display:none"></p>
-  </div>
-  <div class="card" style="margin-top:1rem">
     <div class="card-title">Configuration Backup</div>
     <p style="color:#94a3b8;font-size:.875rem;margin-bottom:1rem">Export your full configuration as a JSON file or restore from a previous backup.</p>
     <div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center">
@@ -1898,6 +1898,7 @@ function formatUptime(s){
   if(h>0)return h+'h '+m+'m';
   return m+'m';
 }
+var calStream=null;
 function renderStatus(d){
   document.getElementById('st-callsign').textContent=d.callsign||'--';
   document.getElementById('st-hostname').textContent=d.hostname||'--';
@@ -1906,6 +1907,10 @@ function renderStatus(d){
   document.getElementById('st-uptime').textContent=formatUptime(d.uptime);
   document.getElementById('st-provisioned').textContent=d.provisioned?'Yes':'No';
   document.getElementById('status-badge').textContent=d.callsign?d.callsign+' \u00b7 '+d.deviceType:'Not provisioned';
+  // Start BER calibration stream for hotspot devices only (once)
+  if(d.deviceType==='hotspot'&&!calStream&&typeof openrig!=='undefined'&&openrig.streamCalibration){
+    calStream=openrig.streamCalibration(updateCalBerDisplay);
+  }
 }
 var combos={};
 function makeCombo(id){
@@ -2179,14 +2184,8 @@ function loadHotspot(){
     document.getElementById('ysf-wiresx-passthrough').checked=d.ysf.wiresxPassthrough||false;
     document.getElementById('ysf2dmr-enabled').checked=d.crossMode.ysf2dmrEnabled;
     document.getElementById('ysf2dmr-tg').value=d.crossMode.ysf2dmrTalkgroup||'';
-    // Populate calibration interactive display from modem config
-    document.getElementById('cal-v-rx-offset').textContent=modem.rxOffset||0;
-    document.getElementById('cal-v-tx-offset').textContent=modem.txOffset||0;
-    document.getElementById('cal-v-rx-level').textContent=modem.rxLevel!=null?modem.rxLevel:50;
-    document.getElementById('cal-v-tx-level').textContent=modem.txLevel!=null?modem.txLevel:50;
-    document.getElementById('cal-v-rx-dc-offset').textContent=modem.rxDcOffset||0;
-    document.getElementById('cal-v-tx-dc-offset').textContent=modem.txDcOffset||0;
-    document.getElementById('cal-v-dmr-delay').textContent=modem.dmrDelay||0;
+    // Populate calibration display from modem config
+    calSetValues(modem);
   }).catch(function(e){console.error('loadHotspot failed:',e);});
 }
 function renderTalkgroups(){
@@ -2344,57 +2343,42 @@ function saveDevice(){
 function calAdjust(field,delta){
   var req={};req[field]=delta;
   var status=document.getElementById('cal-apply-status');
-  status.style.display='';status.style.color='#94a3b8';status.textContent='Applying…';
+  status.style.color='#94a3b8';status.textContent='Applying\u2026';
   openrig.adjustCalibration(req).then(function(r){
-    var c=r.current||{};
-    document.getElementById('cal-v-rx-offset').textContent=c.rxOffset||0;
-    document.getElementById('cal-v-tx-offset').textContent=c.txOffset||0;
-    document.getElementById('cal-v-rx-level').textContent=c.rxLevel!=null?c.rxLevel:50;
-    document.getElementById('cal-v-tx-level').textContent=c.txLevel!=null?c.txLevel:50;
-    document.getElementById('cal-v-rx-dc-offset').textContent=c.rxDcOffset||0;
-    document.getElementById('cal-v-tx-dc-offset').textContent=c.txDcOffset||0;
-    document.getElementById('cal-v-dmr-delay').textContent=c.dmrDelay||0;
-    status.style.color='#22c55e';status.textContent='Applied — modem updating…';
-    setTimeout(function(){status.style.display='none';},2500);
+    if(r.current)calSetValues(r.current);
+    status.style.color='#22c55e';status.textContent='Applied \u2014 modem updating\u2026';
+    setTimeout(function(){status.textContent='';},3000);
   }).catch(function(e){
     status.style.color='#ef4444';status.textContent='Error: '+(e.message||String(e));
   });
+}
+function calSetValues(c){
+  document.getElementById('cal-v-rx-offset').textContent=c.rxOffset||0;
+  document.getElementById('cal-v-tx-offset').textContent=c.txOffset||0;
+  document.getElementById('cal-v-rx-level').textContent=c.rxLevel!=null?c.rxLevel:50;
+  document.getElementById('cal-v-tx-level').textContent=c.txLevel!=null?c.txLevel:50;
+  document.getElementById('cal-v-rx-dc-offset').textContent=c.rxDcOffset||0;
+  document.getElementById('cal-v-tx-dc-offset').textContent=c.txDcOffset||0;
+  document.getElementById('cal-v-dmr-delay').textContent=c.dmrDelay||0;
 }
 function updateCalBerDisplay(reading){
   var ber=reading.berPercent;
   var mode=reading.mode||'';
   var bar=document.getElementById('cal-ber-bar');
   var val=document.getElementById('cal-ber-val');
-  var badge=document.getElementById('cal-ber-badge');
+  var modeEl=document.getElementById('cal-ber-mode');
   if(ber<0){
-    // No reading yet — show waiting state
-    bar.style.width='0%';
-    val.textContent='—';
-    val.style.color='#f1f5f9';
-    badge.textContent='Waiting for signal...';
-    badge.style.background='#334155';badge.style.color='#94a3b8';
+    bar.style.width='0%';bar.style.background='#22c55e';
+    val.textContent='Waiting for signal\u2026';
+    if(modeEl)modeEl.textContent='BER';
     return;
   }
-  // Cap visual at 10% for bar width
   var pct=Math.min(ber/10*100,100);
-  bar.style.width=pct+'%';
-  bar.style.background=ber<2?'#22c55e':ber<5?'#f59e0b':'#ef4444';
+  var col=ber<2?'#22c55e':ber<5?'#f59e0b':'#ef4444';
+  bar.style.width=pct+'%';bar.style.background=col;
   val.textContent=ber.toFixed(2)+'%';
-  val.style.color=ber<2?'#22c55e':ber<5?'#f59e0b':'#ef4444';
-  badge.textContent=(mode&&mode!=='idle'?mode+' — ':'')+ber.toFixed(2)+'% BER';
-  badge.style.background=ber<2?'#14532d':ber<5?'#451a03':'#450a0a';
-  badge.style.color=ber<2?'#86efac':ber<5?'#fcd34d':'#fca5a5';
-  // Also update current values if provided
-  if(reading.current){
-    var c=reading.current;
-    document.getElementById('cal-v-rx-offset').textContent=c.rxOffset||0;
-    document.getElementById('cal-v-tx-offset').textContent=c.txOffset||0;
-    document.getElementById('cal-v-rx-level').textContent=c.rxLevel!=null?c.rxLevel:50;
-    document.getElementById('cal-v-tx-level').textContent=c.txLevel!=null?c.txLevel:50;
-    document.getElementById('cal-v-rx-dc-offset').textContent=c.rxDcOffset||0;
-    document.getElementById('cal-v-tx-dc-offset').textContent=c.txDcOffset||0;
-    document.getElementById('cal-v-dmr-delay').textContent=c.dmrDelay||0;
-  }
+  if(modeEl)modeEl.textContent=mode&&mode!=='idle'?mode:'';
+  if(reading.current)calSetValues(reading.current);
 }
 function esc(s){if(!s)return'';var d=document.createElement('div');d.appendChild(document.createTextNode(s));return d.innerHTML;}
 function renderHotspotStatus(d){
@@ -2449,10 +2433,6 @@ function initPage(){
   setInterval(function(){openrig.getHotspot().then(renderHotspotStatus).catch(function(){});},10000);
   loadHotspot();loadWifi();loadDevice();
   document.getElementById('ysf2dmr-tg').addEventListener('input',updateTGName);
-  // Start live BER calibration stream
-  if(typeof openrig.streamCalibration==='function'){
-    openrig.streamCalibration(updateCalBerDisplay);
-  }
 }
 var go=new Go();
 WebAssembly.instantiateStreaming(fetch('/openrig.wasm'),go.importObject).then(function(result){

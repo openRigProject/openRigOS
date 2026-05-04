@@ -214,14 +214,6 @@ func getFloatDefault(m map[string]any, path string, fallback float64) float64 {
 	return v
 }
 
-// defaultAudioLevel returns the given level, substituting the MMDVM default of 50
-// when the value is zero (proto3 zero-value, meaning "not explicitly set").
-func defaultAudioLevel(level int32) int {
-	if level == 0 {
-		return 50
-	}
-	return int(level)
-}
 
 // ── System helpers ───────────────────────────────────────────────────────
 
@@ -1594,8 +1586,8 @@ func (s *hotspotServer) UpdateHotspot(_ context.Context, req *connect.Request[op
 		nested(cfg, "openrig.hotspot.modem.tx_offset", int(hc.Modem.TxOffset))
 		nested(cfg, "openrig.hotspot.modem.rx_dc_offset", int(hc.Modem.RxDcOffset))
 		nested(cfg, "openrig.hotspot.modem.tx_dc_offset", int(hc.Modem.TxDcOffset))
-		nested(cfg, "openrig.hotspot.modem.rx_level", defaultAudioLevel(hc.Modem.RxLevel))
-		nested(cfg, "openrig.hotspot.modem.tx_level", defaultAudioLevel(hc.Modem.TxLevel))
+		nested(cfg, "openrig.hotspot.modem.rx_level", int(hc.Modem.RxLevel))
+		nested(cfg, "openrig.hotspot.modem.tx_level", int(hc.Modem.TxLevel))
 		nested(cfg, "openrig.hotspot.modem.dmr_delay", int(hc.Modem.DmrDelay))
 	}
 
@@ -1700,14 +1692,12 @@ func (s *hotspotServer) UpdateModemCalibration(_ context.Context, req *connect.R
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot read config: %w", err))
 	}
 
-	rxLevel := defaultAudioLevel(cal.RxLevel)
-	txLevel := defaultAudioLevel(cal.TxLevel)
 	nested(cfg, "openrig.hotspot.modem.rx_offset", int(cal.RxOffset))
 	nested(cfg, "openrig.hotspot.modem.tx_offset", int(cal.TxOffset))
 	nested(cfg, "openrig.hotspot.modem.rx_dc_offset", int(cal.RxDcOffset))
 	nested(cfg, "openrig.hotspot.modem.tx_dc_offset", int(cal.TxDcOffset))
-	nested(cfg, "openrig.hotspot.modem.rx_level", rxLevel)
-	nested(cfg, "openrig.hotspot.modem.tx_level", txLevel)
+	nested(cfg, "openrig.hotspot.modem.rx_level", int(cal.RxLevel))
+	nested(cfg, "openrig.hotspot.modem.tx_level", int(cal.TxLevel))
 	nested(cfg, "openrig.hotspot.modem.dmr_delay", int(cal.DmrDelay))
 
 	if err := writeConfig(cfg); err != nil {
@@ -1718,19 +1708,11 @@ func (s *hotspotServer) UpdateModemCalibration(_ context.Context, req *connect.R
 		go exec.Command("/usr/local/lib/openrig/mmdvm-update.sh").Run()
 	} else {
 		log.Printf("[dev] UpdateModemCalibration: rx_offset=%d tx_offset=%d rx_level=%d tx_level=%d rx_dc_offset=%d tx_dc_offset=%d dmr_delay=%d",
-			cal.RxOffset, cal.TxOffset, rxLevel, txLevel, cal.RxDcOffset, cal.TxDcOffset, cal.DmrDelay)
+			cal.RxOffset, cal.TxOffset, cal.RxLevel, cal.TxLevel, cal.RxDcOffset, cal.TxDcOffset, cal.DmrDelay)
 	}
 
 	return connect.NewResponse(&openrigv1.UpdateModemCalibrationResponse{
-		Calibration: &openrigv1.ModemCalibration{
-			RxOffset:   cal.RxOffset,
-			TxOffset:   cal.TxOffset,
-			RxDcOffset: cal.RxDcOffset,
-			TxDcOffset: cal.TxDcOffset,
-			RxLevel:    int32(rxLevel),
-			TxLevel:    int32(txLevel),
-			DmrDelay:   cal.DmrDelay,
-		},
+		Calibration: cal,
 	}), nil
 }
 
