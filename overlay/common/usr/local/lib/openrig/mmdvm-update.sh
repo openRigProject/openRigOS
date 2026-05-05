@@ -13,6 +13,11 @@ LOG_TAG="openrig-mmdvm-update"
 
 log() { logger -t "$LOG_TAG" "$*" 2>/dev/null; echo "[mmdvm-update] $*"; }
 
+# Serialize concurrent invocations (deploy + service restart can race on the .tmp file).
+LOCK_FILE="/run/openrig-mmdvm-update.lock"
+exec 9>"$LOCK_FILE"
+flock -w 30 9 || { log "Timed out waiting for lock — another instance is running."; exit 1; }
+
 # --calibration: update MMDVM.ini and restart only MMDVMHost (not gateways).
 # Used by the calibration tool so the device stays unlinked during adjustment.
 CALIBRATION_ONLY=0
@@ -117,6 +122,7 @@ if [ "$DMR_ID" != "0" ] && [ -n "$DMR_ID" ]; then
 fi
 
 # Section-aware updates for enable flags, modem, frequencies, and calibration
+_MMDVM_TMP=$(mktemp "${MMDVM_INI}.XXXXXX")
 awk -v dmr="$DMR_ENABLED" -v ysf="$YSF_ENABLED" \
     -v port="$MODEM_PORT" -v speed="$MODEM_SPEED" \
     -v rxf="$RX_FREQ" -v txf="$TX_FREQ" \
@@ -139,7 +145,7 @@ awk -v dmr="$DMR_ENABLED" -v ysf="$YSF_ENABLED" \
     /^TXLevel=/ && section == "[Modem]" { $0 = "TXLevel=" tx_level }
     /^DMRDelay=/ && section == "[Modem]" { $0 = "DMRDelay=" dmr_delay }
     { print }
-' "$MMDVM_INI" > "${MMDVM_INI}.tmp" && mv "${MMDVM_INI}.tmp" "$MMDVM_INI"
+' "$MMDVM_INI" > "$_MMDVM_TMP" && mv "$_MMDVM_TMP" "$MMDVM_INI" || { rm -f "$_MMDVM_TMP"; exit 1; }
 
 chmod 644 "$MMDVM_INI"
 
