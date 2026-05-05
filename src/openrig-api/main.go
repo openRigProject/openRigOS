@@ -1582,13 +1582,8 @@ func (s *hotspotServer) UpdateHotspot(_ context.Context, req *connect.Request[op
 	if hc.Modem != nil {
 		nested(cfg, "openrig.hotspot.modem.type", hc.Modem.Type)
 		nested(cfg, "openrig.hotspot.modem.port", hc.Modem.Port)
-		nested(cfg, "openrig.hotspot.modem.rx_offset", int(hc.Modem.RxOffset))
-		nested(cfg, "openrig.hotspot.modem.tx_offset", int(hc.Modem.TxOffset))
-		nested(cfg, "openrig.hotspot.modem.rx_dc_offset", int(hc.Modem.RxDcOffset))
-		nested(cfg, "openrig.hotspot.modem.tx_dc_offset", int(hc.Modem.TxDcOffset))
-		nested(cfg, "openrig.hotspot.modem.rx_level", int(hc.Modem.RxLevel))
-		nested(cfg, "openrig.hotspot.modem.tx_level", int(hc.Modem.TxLevel))
-		nested(cfg, "openrig.hotspot.modem.dmr_delay", int(hc.Modem.DmrDelay))
+		// Calibration fields (offsets, levels, delay) are owned by
+		// UpdateModemCalibration / AdjustCalibration — never overwrite them here.
 	}
 
 	if err := writeConfig(cfg); err != nil {

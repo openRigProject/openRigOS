@@ -50,8 +50,11 @@ RX_OFFSET=$(jq -r '.openrig.hotspot.modem.rx_offset // 0' "$OPENRIG_JSON")
 TX_OFFSET=$(jq -r '.openrig.hotspot.modem.tx_offset // 0' "$OPENRIG_JSON")
 RX_DC_OFFSET=$(jq -r '.openrig.hotspot.modem.rx_dc_offset // 0' "$OPENRIG_JSON")
 TX_DC_OFFSET=$(jq -r '.openrig.hotspot.modem.tx_dc_offset // 0' "$OPENRIG_JSON")
-RX_LEVEL=$(jq -r '.openrig.hotspot.modem.rx_level // 50' "$OPENRIG_JSON")
-TX_LEVEL=$(jq -r '.openrig.hotspot.modem.tx_level // 50' "$OPENRIG_JSON")
+# Treat 0 as "not set" for audio levels — 0 gain silences the modem.
+# The calibration tool enforces a minimum of 1 via clamping; 0 only appears
+# from proto3 zero-default writes before calibration has been configured.
+RX_LEVEL=$(jq -r 'if (.openrig.hotspot.modem.rx_level // 0)|tonumber > 0 then .openrig.hotspot.modem.rx_level else 50 end' "$OPENRIG_JSON")
+TX_LEVEL=$(jq -r 'if (.openrig.hotspot.modem.tx_level // 0)|tonumber > 0 then .openrig.hotspot.modem.tx_level else 50 end' "$OPENRIG_JSON")
 DMR_DELAY=$(jq -r '.openrig.hotspot.modem.dmr_delay // 0' "$OPENRIG_JSON")
 
 # DMR ID: use operator-level if > 0, otherwise fall back to hotspot-level
