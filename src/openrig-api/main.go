@@ -1010,6 +1010,7 @@ func processMQTTPayload(payload []byte) {
 			TG        int     `json:"tg"`
 			Duration  float64 `json:"duration"`
 			BER       float64 `json:"ber"`
+			Loss      float64 `json:"loss"`
 		}
 		if err := json.Unmarshal(raw, &ev); err != nil {
 			continue
@@ -1052,7 +1053,8 @@ func processMQTTPayload(payload []byte) {
 			// Update the existing entry in-place so streaming clients pick up the change.
 			lastHeardMu.Lock()
 			entry.Duration = fmt.Sprintf("%.0fs", ev.Duration)
-			entry.Loss = fmt.Sprintf("%.2f%%", ev.BER)
+			entry.Loss = fmt.Sprintf("%.2f%%", ev.Loss)
+			entry.Ber = fmt.Sprintf("%.2f%%", ev.BER)
 			lastHeardMu.Unlock()
 			// Publish BER to any active StreamCalibration clients.
 			if ev.BER >= 0 {
@@ -1889,8 +1891,12 @@ func (s *hotspotServer) StreamLastHeard(ctx context.Context, _ *connect.Request[
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
-	for _, e := range mqttLastHeard() {
-		key := e.Timestamp + e.Callsign + e.Duration + e.Loss
+	// Send initial cache oldest-first so the client's prepend-on-receive
+	// logic results in newest-at-top ordering in the table.
+	initial := mqttLastHeard()
+	for i := len(initial) - 1; i >= 0; i-- {
+		e := initial[i]
+		key := e.Timestamp + e.Callsign + e.Duration + e.Loss + e.Ber
 		sent[key] = true
 		if err := stream.Send(e); err != nil {
 			return err
@@ -1905,7 +1911,7 @@ func (s *hotspotServer) StreamLastHeard(ctx context.Context, _ *connect.Request[
 			for _, e := range mqttLastHeard() {
 				// Key includes Duration: when an in-progress entry gets its
 				// duration filled in, the key changes and the update is re-sent.
-				key := e.Timestamp + e.Callsign + e.Duration + e.Loss
+				key := e.Timestamp + e.Callsign + e.Duration + e.Loss + e.Ber
 				if sent[key] {
 					continue
 				}

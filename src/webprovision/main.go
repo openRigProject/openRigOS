@@ -1483,20 +1483,9 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
 <!-- Status Panel -->
 <div class="panel active" id="panel-status" style="width:100vw;position:relative;left:50%;transform:translateX(-50%);padding:1.5rem">
   <div style="display:grid;grid-template-columns:260px 1fr 520px;gap:1.25rem;align-items:start">
-    <!-- Left: Device Info + Hotspot Status -->
+    <!-- Left: Hotspot Status + Device Info -->
     <div style="position:sticky;top:1.5rem">
-    <div class="card" style="margin-bottom:1.25rem">
-      <div class="card-title">Device Info</div>
-      <div class="stat-grid" id="status-grid">
-        <div class="stat"><div class="stat-label">Callsign</div><div class="stat-value" id="st-callsign">--</div></div>
-        <div class="stat"><div class="stat-label">Hostname</div><div class="stat-value" id="st-hostname">--</div></div>
-        <div class="stat"><div class="stat-label">Device Type</div><div class="stat-value" id="st-type">--</div></div>
-        <div class="stat"><div class="stat-label">Version</div><div class="stat-value" id="st-version">--</div></div>
-        <div class="stat"><div class="stat-label">Uptime</div><div class="stat-value" id="st-uptime">--</div></div>
-        <div class="stat"><div class="stat-label">Provisioned</div><div class="stat-value" id="st-provisioned">--</div></div>
-      </div>
-    </div>
-      <div class="card" id="hs-card" style="margin-bottom:0;display:none">
+      <div class="card" id="hs-card" style="margin-bottom:1.25rem;display:none">
         <div class="card-title">Hotspot Status</div>
         <div class="hs-hdr">Modes Enabled</div>
         <div class="hs-modes">
@@ -1512,6 +1501,17 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
         <div class="hs-hdr" style="margin-top:.25rem" id="hs-net-hdr">Network</div>
         <div class="hs-full" id="hs-net">--</div>
       </div>
+    <div class="card" style="margin-bottom:0">
+      <div class="card-title">Device Info</div>
+      <div class="stat-grid" id="status-grid">
+        <div class="stat"><div class="stat-label">Callsign</div><div class="stat-value" id="st-callsign">--</div></div>
+        <div class="stat"><div class="stat-label">Hostname</div><div class="stat-value" id="st-hostname">--</div></div>
+        <div class="stat"><div class="stat-label">Device Type</div><div class="stat-value" id="st-type">--</div></div>
+        <div class="stat"><div class="stat-label">Version</div><div class="stat-value" id="st-version">--</div></div>
+        <div class="stat"><div class="stat-label">Uptime</div><div class="stat-value" id="st-uptime">--</div></div>
+        <div class="stat"><div class="stat-label">Provisioned</div><div class="stat-value" id="st-provisioned">--</div></div>
+      </div>
+    </div>
     </div>
     <!-- Center: Link Manager + Last Heard -->
     <div>
@@ -1532,7 +1532,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
       <div class="card" style="margin-bottom:0">
         <div class="card-title">Last Heard</div>
         <table class="clients-table" id="lastHeardTable" style="display:none">
-          <thead><tr><th>Callsign</th><th>Mode</th><th>Info</th><th>Duration</th><th>BER</th><th>Time</th></tr></thead>
+          <thead><tr><th>Callsign</th><th>Mode</th><th>Info</th><th>Duration</th><th>BER</th><th>Loss</th><th>Time</th></tr></thead>
           <tbody id="lastHeardBody"></tbody>
         </table>
         <p id="lastHeardEmpty" class="empty" style="text-align:center;padding:.75rem 0">No recent activity</p>
@@ -2059,19 +2059,22 @@ function showHeardDetail(info){
   document.getElementById('hd-grid').textContent=info.grid?'Grid: '+info.grid:'';
   document.getElementById('hd-class').textContent=info.licenseClass?'Class: '+info.licenseClass:'';
 }
+function formatTime(ts){if(!ts)return'--';var d=new Date(ts);return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});}
 function makeHeardRow(e){
   var tr=document.createElement('tr');
   tr.dataset.ts=e.timestamp;
-  tr.dataset.arrived=e.arrivedAt||Date.now(); // browser epoch ms — immune to server/browser clock skew
   tr.dataset.call=e.callsign;
   tr.dataset.mode=e.mode;
+  if(!e.duration)tr.dataset.active='1';
   var mc=e.mode==='DMR'?'color:#3b82f6':e.mode==='YSF'?'color:#22c55e':'';
   var qrzHref='https://www.qrz.com/db/'+encodeURIComponent(baseCall(e.callsign));
+  var durHtml=e.duration?esc(e.duration):'<span class="dur-live" style="color:#22c55e">0:00</span>';
   tr.innerHTML='<td><a href="'+qrzHref+'" target="_blank" class="map-call-link">'+esc(e.callsign)+'</a></td>'
     +'<td style="'+mc+'">'+esc(e.mode)+'</td><td>'+esc(e.info)+'</td>'
-    +'<td class="dur-cell">'+esc(e.duration)+'</td>'
+    +'<td class="dur-cell">'+durHtml+'</td>'
+    +'<td class="ber-cell">'+esc(e.ber||'')+'</td>'
     +'<td class="loss-cell">'+esc(e.loss||'')+'</td>'
-    +'<td>'+timeAgoMs(tr.dataset.arrived)+'</td>';
+    +'<td><div>'+formatTime(e.timestamp)+'</div><div class="time-ago" style="font-size:.75em;color:#64748b">'+timeAgo(e.timestamp)+'</div></td>';
   return tr;
 }
 function timeAgoMs(ms){var d=Math.floor((Date.now()-Number(ms))/1000);if(d<60)return d+'s ago';if(d<3600)return Math.floor(d/60)+'m ago';if(d<86400)return Math.floor(d/3600)+'h ago';return Math.floor(d/86400)+'d ago';}
@@ -2092,11 +2095,14 @@ function appendOrUpdateLastHeard(e){
   }
   if(sameIdx>=0){
     lastHeardEntries[sameIdx].duration=e.duration;
+    lastHeardEntries[sameIdx].ber=e.ber||'';
     lastHeardEntries[sameIdx].loss=e.loss||'';
     var cell=findHeardRow(e.callsign,e.mode,e.timestamp);
     if(cell){
       cell.querySelector('.dur-cell').textContent=e.duration;
+      cell.querySelector('.ber-cell').textContent=e.ber||'';
       cell.querySelector('.loss-cell').textContent=e.loss||'';
+      cell.removeAttribute('data-active');
     }
     return;
   }
@@ -2428,7 +2434,8 @@ function initPage(){
   openrig.getStatus().then(renderStatus).catch(function(){});
   openrig.streamStatus(renderStatus,onStreamError);
   openrig.streamLastHeard(appendOrUpdateLastHeard,onStreamError);
-  setInterval(function(){document.querySelectorAll('#lastHeardBody tr').forEach(function(tr){var a=tr.dataset.arrived;if(a){tr.cells[tr.cells.length-1].textContent=timeAgoMs(a);}});},30000);
+  setInterval(function(){document.querySelectorAll('#lastHeardBody tr').forEach(function(tr){var ts=tr.dataset.ts;if(ts){var el=tr.cells[tr.cells.length-1].querySelector('.time-ago');if(el)el.textContent=timeAgo(ts);}});},30000);
+  setInterval(function(){document.querySelectorAll('#lastHeardBody tr[data-active]').forEach(function(tr){var s=Math.floor((Date.now()-new Date(tr.dataset.ts).getTime())/1000);var el=tr.querySelector('.dur-live');if(el)el.textContent=Math.floor(s/60)+':'+(s%60<10?'0':'')+s%60;});},1000);
   openrig.getHotspot().then(renderHotspotStatus).catch(function(){});
   setInterval(function(){openrig.getHotspot().then(renderHotspotStatus).catch(function(){});},10000);
   loadHotspot();loadWifi();loadDevice();
