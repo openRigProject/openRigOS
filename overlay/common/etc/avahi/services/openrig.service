@@ -21,7 +21,7 @@
     <port>7373</port>
     <txt-record>provisioned=false</txt-record>
     <txt-record>type=unconfigured</txt-record>
-    <txt-record>version=0.1.0</txt-record>
+    <txt-record>version=0.2.0</txt-record>
   </service>
 
   <!-- SSH — present on all openRig devices -->

@@ -528,7 +528,7 @@ func buildDeviceStatus(cfg map[string]any, m systemMetrics) *openrigv1.DeviceSta
 		Provisioned: getBool(cfg, "openrig.device.provisioned"),
 		DeviceType:  getString(cfg, "openrig.device.type", "unconfigured"),
 		Callsign:    getString(cfg, "openrig.operator.callsign", ""),
-		Version:     getString(cfg, "openrig.version", "0.1.0"),
+		Version:     getString(cfg, "openrig.version", "0.2.0"),
 		Hostname:    getString(cfg, "openrig.device.hostname", "openrig-config"),
 		Uptime:      int32(m.Uptime),
 		CpuPercent:  m.CPUPercent,

@@ -30,7 +30,7 @@ else
     # Full service file — read identity from config
     CALLSIGN=$(jq -r '.openrig.operator.callsign // ""' "$OPENRIG_JSON")
     DEVICE_TYPE=$(jq -r '.openrig.device.type // "unconfigured"' "$OPENRIG_JSON")
-    VERSION=$(jq -r '.openrig.version // "0.1.0"' "$OPENRIG_JSON")
+    VERSION=$(jq -r '.openrig.version // "0.2.0"' "$OPENRIG_JSON")
 
     {
         cat <<AVAHI_BASE
