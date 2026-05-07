@@ -2022,19 +2022,58 @@ var heardMap=null;
 var heardMarker=null;      // single pin — always the latest (or pinned) callsign
 var heardCallsignInfo={};  // call -> QRZ info
 var pinnedCallsign=null;   // null = auto-follow latest
+var lastFlyCallsign=null;  // track last callsign we flew to; skip fly if unchanged
+
+// In-memory tile cache: URL -> blob object URL (survives network blips, avoids re-fetching)
+var _tileCache={};
+var _tileCacheKeys=[];
+var _tileCacheMax=300; // ~6 MB at ~20 KB per tile
+function _cachedTileUrl(url){
+  return new Promise(function(resolve,reject){
+    if(_tileCache[url]){resolve(_tileCache[url]);return;}
+    fetch(url).then(function(r){
+      if(!r.ok)throw new Error(r.status);
+      return r.blob();
+    }).then(function(blob){
+      var objUrl=URL.createObjectURL(blob);
+      _tileCache[url]=objUrl;
+      _tileCacheKeys.push(url);
+      // Evict oldest entries when cache is full
+      while(_tileCacheKeys.length>_tileCacheMax){
+        var old=_tileCacheKeys.shift();
+        URL.revokeObjectURL(_tileCache[old]);
+        delete _tileCache[old];
+      }
+      resolve(objUrl);
+    }).catch(reject);
+  });
+}
+var CachedTileLayer=L.TileLayer.extend({
+  createTile:function(coords,done){
+    var tile=document.createElement('img');
+    tile.alt='';
+    var url=this.getTileUrl(coords);
+    _cachedTileUrl(url).then(function(src){
+      tile.src=src;done(null,tile);
+    }).catch(function(){
+      // Retry up to 3x with backoff on network failure
+      var retries=0;
+      function retry(){
+        retries++;
+        if(retries>3){done('error',tile);return;}
+        setTimeout(function(){
+          _cachedTileUrl(url).then(function(src){tile.src=src;done(null,tile);}).catch(retry);
+        },retries*2000);
+      }
+      retry();
+    });
+    return tile;
+  }
+});
 function initHeardMap(){
   if(heardMap)return;
   heardMap=L.map('heard-map',{center:[20,0],zoom:4});
-  var tl=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap contributors',maxZoom:18});
-  tl.on('tileerror',function(ev){
-    // Retry failed tiles after a short delay (handles transient network blips)
-    var tile=ev.tile;
-    var retries=(tile._retries||0)+1;
-    if(retries>3)return;
-    tile._retries=retries;
-    setTimeout(function(){tile.src=tile.src.split('?')[0]+'?r='+retries;},retries*2000);
-  });
-  tl.addTo(heardMap);
+  new CachedTileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap contributors',maxZoom:18}).addTo(heardMap);
   // clicking the map background unpins
   heardMap.on('click',function(){pinnedCallsign=null;});
   // Container may not be fully laid out yet — invalidate after paint settles
@@ -2058,7 +2097,9 @@ function updateMapPin(info,fly){
       heardMap.flyTo([info.lat,info.lon],6,{duration:1.5});
     });
   }
-  if(fly)heardMap.flyTo([info.lat,info.lon],6,{duration:1.5});
+  // Only fly when the callsign actually changes — prevents bouncing when two
+  // stations are QSOing and alternating at the top of the last-heard list.
+  if(fly&&call!==lastFlyCallsign){lastFlyCallsign=call;heardMap.flyTo([info.lat,info.lon],6,{duration:1.5});}
 }
 function showHeardDetail(info){
   var d=document.getElementById('heard-detail');
