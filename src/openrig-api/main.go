@@ -1872,6 +1872,9 @@ func (s *hotspotServer) LookupCallsign(_ context.Context, req *connect.Request[o
 		if strings.Contains(msg, "not found") || strings.Contains(msg, "Not found") {
 			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
+		if strings.Contains(msg, "authentication failed") || strings.Contains(msg, "credentials not configured") {
+			return nil, connect.NewError(connect.CodeUnauthenticated, err)
+		}
 		return nil, connect.NewError(connect.CodeUnavailable, err)
 	}
 	return connect.NewResponse(info), nil
