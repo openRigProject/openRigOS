@@ -1887,6 +1887,8 @@ function showTab(name,e){
   document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
   document.getElementById('panel-'+name).classList.add('active');
   if(e&&e.target)e.target.classList.add('active');
+  // Leaflet needs a size hint when its container transitions from display:none
+  if(name==='status'&&heardMap)setTimeout(function(){heardMap.invalidateSize();},50);
 }
 function toast(msg,isError){
   var el=document.getElementById('toast');
@@ -2023,9 +2025,20 @@ var pinnedCallsign=null;   // null = auto-follow latest
 function initHeardMap(){
   if(heardMap)return;
   heardMap=L.map('heard-map',{center:[20,0],zoom:4});
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap contributors',maxZoom:18}).addTo(heardMap);
+  var tl=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap contributors',maxZoom:18});
+  tl.on('tileerror',function(ev){
+    // Retry failed tiles after a short delay (handles transient network blips)
+    var tile=ev.tile;
+    var retries=(tile._retries||0)+1;
+    if(retries>3)return;
+    tile._retries=retries;
+    setTimeout(function(){tile.src=tile.src.split('?')[0]+'?r='+retries;},retries*2000);
+  });
+  tl.addTo(heardMap);
   // clicking the map background unpins
   heardMap.on('click',function(){pinnedCallsign=null;});
+  // Container may not be fully laid out yet — invalidate after paint settles
+  setTimeout(function(){heardMap.invalidateSize();},150);
 }
 function updateMapPin(info,fly){
   if(!heardMap||!info||!info.lat||!info.lon)return;
