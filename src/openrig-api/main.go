@@ -1868,6 +1868,10 @@ func (s *hotspotServer) GetServers(_ context.Context, req *connect.Request[openr
 func (s *hotspotServer) LookupCallsign(_ context.Context, req *connect.Request[openrigv1.LookupCallsignRequest]) (*connect.Response[openrigv1.CallsignInfo], error) {
 	info, err := qrzLookup(req.Msg.Callsign)
 	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "not found") || strings.Contains(msg, "Not found") {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
 		return nil, connect.NewError(connect.CodeUnavailable, err)
 	}
 	return connect.NewResponse(info), nil
