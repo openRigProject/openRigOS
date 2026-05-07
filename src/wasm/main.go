@@ -264,27 +264,65 @@ func jsUpdateModemCalibration(_ js.Value, args []js.Value) any {
 
 func jsStreamCalibration(_ js.Value, args []js.Value) any {
 	callback := args[0]
-	// Return an object with a cancel() method to the JS side so the stream can be stopped.
-	cancelHolder := js.Global().Get("Object").New()
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancelHolder.Set("cancel", js.FuncOf(func(_ js.Value, _ []js.Value) any {
-			cancel()
-			return js.Undefined()
-		}))
-		stream, err := hotspotClient.StreamCalibration(ctx, connect.NewRequest(&openrigv1.Empty{}))
-		if err != nil {
-			return
+	var onError js.Value
+	if len(args) > 1 && args[1].Type() == js.TypeFunction {
+		onError = args[1]
+	}
+	notifyError := func(n int) {
+		if onError.Type() == js.TypeFunction {
+			onError.Invoke(n)
 		}
-		for stream.Receive() {
-			b, err := jsonOpts.Marshal(stream.Msg())
+	}
+	cancelHolder := js.Global().Get("Object").New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelHolder.Set("cancel", js.FuncOf(func(_ js.Value, _ []js.Value) any {
+		cancel()
+		return js.Undefined()
+	}))
+	go func() {
+		failures := 0
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			stream, err := hotspotClient.StreamCalibration(ctx, connect.NewRequest(&openrigv1.Empty{}))
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				failures++
+				if failures > 3 {
+					notifyError(failures)
+					time.Sleep(10 * time.Second)
+				} else {
+					time.Sleep(2 * time.Second)
+				}
 				continue
 			}
-			parsed := js.Global().Get("JSON").Call("parse", string(b))
-			callback.Invoke(parsed)
+			if failures > 0 {
+				notifyError(0)
+			}
+			failures = 0
+			for stream.Receive() {
+				b, err := jsonOpts.Marshal(stream.Msg())
+				if err != nil {
+					continue
+				}
+				parsed := js.Global().Get("JSON").Call("parse", string(b))
+				callback.Invoke(parsed)
+			}
+			stream.Close()
+			if ctx.Err() != nil {
+				return
+			}
+			failures++
+			if failures > 3 {
+				notifyError(failures)
+				time.Sleep(10 * time.Second)
+			} else {
+				time.Sleep(2 * time.Second)
+			}
 		}
-		stream.Close()
 	}()
 	return cancelHolder
 }

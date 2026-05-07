@@ -1356,6 +1356,8 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
   .logo{font-size:1.2rem;font-weight:700;color:#38bdf8}
   .status-badge{font-size:.75rem;padding:.25rem .6rem;border-radius:999px;background:#065f46;color:#6ee7b7}
   #conn-warn{display:none;background:#7f1d1d;color:#fca5a5;text-align:center;padding:.5rem 1rem;font-size:.85rem;border-bottom:1px solid #ef4444}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .conn-spinner{display:inline-block;animation:spin 1.2s linear infinite;margin-right:.4rem}
   .tabs{display:flex;background:#1e293b;border-bottom:1px solid #334155;padding:0 1rem;gap:0}
   .tab{padding:.75rem 1.25rem;font-size:.875rem;color:#64748b;cursor:pointer;border-bottom:2px solid transparent;
     transition:color .15s,border-color .15s;background:none;border-top:none;border-left:none;border-right:none}
@@ -1467,7 +1469,7 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
-<div id="conn-warn">&#9888; Connection lost — retrying... (<span id="conn-warn-count">0</span> failed attempts)</div>
+<div id="conn-warn"><span class="conn-spinner">&#8635;</span>Connection to device lost — reconnecting<span id="conn-warn-count"></span></div>
 <div class="header">
   <div style="display:flex;align-items:center;gap:.6rem"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -10 220 220" width="28" height="28" fill="none" style="flex-shrink:0"><rect stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" x="12" y="52" width="176" height="120" rx="9"/><path stroke="#38bdf8" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round" d="M62 52Q62 32 100 32Q138 32 138 52"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="72" cy="114" r="46"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="72" cy="114" r="19"/><circle stroke="#38bdf8" stroke-width="5" fill="#38bdf8" cx="72" cy="114" r="7"/><rect stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" x="128" y="64" width="48" height="30" rx="4"/><circle stroke="#38bdf8" stroke-width="5" fill="none" cx="170" cy="148" r="16"/></svg><div class="logo">openRig</div></div>
   <div class="status-badge" id="status-badge">Loading...</div>
@@ -1909,7 +1911,7 @@ function renderStatus(d){
   document.getElementById('status-badge').textContent=d.callsign?d.callsign+' \u00b7 '+d.deviceType:'Not provisioned';
   // Start BER calibration stream for hotspot devices only (once)
   if(d.deviceType==='hotspot'&&!calStream&&typeof openrig!=='undefined'&&openrig.streamCalibration){
-    calStream=openrig.streamCalibration(updateCalBerDisplay);
+    calStream=openrig.streamCalibration(updateCalBerDisplay,onStreamError);
   }
 }
 var combos={};
@@ -2140,7 +2142,12 @@ function appendOrUpdateLastHeard(e){
           if(pinnedCallsign===null)showHeardDetail(infoWithOrig);
         }
       }).catch(function(err){
-        console.warn('QRZ lookup failed for '+lookupCall+':',(err&&err.message)||String(err));
+        var msg=(err&&err.message)||String(err);
+        // "Not found" just means the callsign isn't in QRZ — expected for unusual calls.
+        // Don't disable QRZ for the session on these.
+        if(msg.indexOf('Not found')>=0||msg.indexOf('not found')>=0){console.debug('QRZ: not found:',lookupCall);return;}
+        // Auth failure or network error — disable further lookups until page reload.
+        console.warn('QRZ lookup disabled:',msg);
         qrzAvailable=false;
       });
     }
@@ -2262,12 +2269,24 @@ function saveWifi(){
   var nets=wifiNets.map(function(n,i){return{ssid:n.ssid,password:n.password||'',security:n.security||'auto',priority:wifiNets.length-i};});
   openrig.updateWifi({networks:nets}).then(function(){toast('WiFi config saved');}).catch(function(e){toast(e.message,true);});
 }
-function onStreamError(n){
+function showConnWarn(msg){
   var w=document.getElementById('conn-warn');
-  if(n===0){w.style.display='none';return;}
-  document.getElementById('conn-warn-count').textContent=n;
+  var c=document.getElementById('conn-warn-count');
+  if(msg){c.textContent=' ('+msg+')';}else{c.textContent='';}
   w.style.display='';
 }
+function hideConnWarn(){document.getElementById('conn-warn').style.display='none';}
+function onStreamError(n){
+  if(n===0){
+    hideConnWarn();
+    // Reset calStream so renderStatus can restart it when the next status tick arrives.
+    if(calStream){calStream.cancel();calStream=null;}
+    return;
+  }
+  showConnWarn('attempt '+n);
+}
+window.addEventListener('offline',function(){showConnWarn('no network');});
+window.addEventListener('online',function(){/* WASM retry loops will reconnect; just update the label */showConnWarn('reconnecting\u2026');});
 function restartSvc(name){
   openrig.restartService(name).then(function(){toast(name+' restarted');}).catch(function(e){toast(e.message,true);});
 }
@@ -2294,7 +2313,43 @@ function loadDevice(){
     document.getElementById('dev-qrz-user').value=d.qrzUsername||'';
     document.getElementById('dev-qrz-pass').value=d.qrzPassword||'';
     qrzAvailable=!!(d.qrzUsername&&d.qrzPassword);
+    // Cache entries arrive before loadDevice completes, so their QRZ lookups were
+    // skipped. Now that we know credentials are available, look up any entries that
+    // didn't get a lookup and fly the map to the most recent one.
+    if(qrzAvailable)lookupPendingHeardEntries();
   }).catch(function(){});
+}
+function lookupPendingHeardEntries(){
+  if(!qrzAvailable||!openrig||!openrig.lookupCallsign)return;
+  // bestIdx tracks the lowest (most recent) list index that has resolved with coords.
+  // Whenever a lookup resolves at a lower index, we update the map to that entry.
+  var bestIdx=Infinity;
+  function trySetMap(i,info,origCall){
+    if(i>=bestIdx)return; // a more-recent entry already owns the map
+    bestIdx=i;
+    initHeardMap();
+    var withOrig=Object.assign({},info,{heardAs:origCall});
+    updateMapPin(withOrig,true);
+    showHeardDetail(withOrig);
+  }
+  lastHeardEntries.slice(0,20).forEach(function(e,i){
+    var call=baseCall(e.callsign);
+    // Already cached — use immediately without a network call.
+    if(heardCallsignInfo[call]){
+      var cached=heardCallsignInfo[call];
+      if(cached.lat&&cached.lon)trySetMap(i,cached,e.callsign);
+      return;
+    }
+    openrig.lookupCallsign(call).then(function(info){
+      if(!info||!info.lat||!info.lon)return;
+      heardCallsignInfo[info.call]=info;
+      trySetMap(i,info,e.callsign);
+    }).catch(function(err){
+      var msg=(err&&err.message)||String(err);
+      if(msg.indexOf('Not found')>=0||msg.indexOf('not found')>=0){console.debug('QRZ: not found:',call);return;}
+      console.warn('QRZ lookup disabled:',msg);qrzAvailable=false;
+    });
+  });
 }
 function testQrzCreds(){
   var callsign=document.getElementById('dev-callsign').value||'KC1YGY';
@@ -2441,6 +2496,15 @@ function initPage(){
   loadHotspot();loadWifi();loadDevice();
   document.getElementById('ysf2dmr-tg').addEventListener('input',updateTGName);
 }
+// Suppress uncaught promise rejections from WASM fetch calls (net::ERR_TIMED_OUT,
+// network error, etc). These are handled by the WASM retry loops — the rejections
+// are noise from the Go runtime's fetch bridge, not actionable JS errors.
+window.addEventListener('unhandledrejection',function(e){
+  var msg=(e.reason&&(e.reason.message||String(e.reason)))||'';
+  if(msg==='network error'||msg.indexOf('ERR_TIMED_OUT')>=0||msg.indexOf('ERR_NETWORK')>=0||msg.indexOf('Failed to fetch')>=0){
+    e.preventDefault();
+  }
+});
 var go=new Go();
 WebAssembly.instantiateStreaming(fetch('/openrig.wasm'),go.importObject).then(function(result){
   go.run(result.instance);
