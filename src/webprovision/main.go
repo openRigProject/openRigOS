@@ -2192,15 +2192,7 @@ function appendOrUpdateLastHeard(e){
           updateMapPin(infoWithOrig,pinnedCallsign===null);
           if(pinnedCallsign===null)showHeardDetail(infoWithOrig);
         }
-      }).catch(function(err){
-        var msg=(err&&err.message)||String(err);
-        // "Not found" just means the callsign isn't in QRZ — expected for unusual calls.
-        // Don't disable QRZ for the session on these.
-        if(msg.indexOf('Not found')>=0||msg.indexOf('not found')>=0){console.debug('QRZ: not found:',lookupCall);return;}
-        // Auth failure or network error — disable further lookups until page reload.
-        console.warn('QRZ lookup disabled:',msg);
-        qrzAvailable=false;
-      });
+      }).catch(function(err){handleQrzError(err,lookupCall);});
     }
   }
 }
@@ -2293,6 +2285,20 @@ function saveHotspot(){
   openrig.updateHotspot(body).then(function(){toast('Hotspot config saved');openrig.getHotspot().then(renderHotspotStatus).catch(function(){});}).catch(function(e){toast(e.message,true);});
 }
 var qrzAvailable=false;
+// Handle a QRZ lookup error. Returns true if the error is terminal (qrzAvailable set false).
+function handleQrzError(err,call){
+  var msg=(err&&err.message)||String(err);
+  if(msg.indexOf('Not found')>=0||msg.indexOf('not found')>=0){
+    console.debug('QRZ: not found:',call);return false;
+  }
+  if(msg.indexOf('unauthenticated')>=0||msg.indexOf('Unauthenticated')>=0||
+     msg.indexOf('authentication failed')>=0||msg.indexOf('credentials not configured')>=0){
+    console.warn('QRZ credentials invalid or not configured — check Device settings');
+    qrzAvailable=false;return true;
+  }
+  console.warn('QRZ lookup disabled:',msg);
+  qrzAvailable=false;return true;
+}
 var wifiNets=[];
 function loadWifi(){
   openrig.getWifi().then(function(d){wifiNets=d.networks||[];renderWifiNets();}).catch(function(){});
@@ -2395,11 +2401,7 @@ function lookupPendingHeardEntries(){
       if(!info||!info.lat||!info.lon)return;
       heardCallsignInfo[info.call]=info;
       trySetMap(i,info,e.callsign);
-    }).catch(function(err){
-      var msg=(err&&err.message)||String(err);
-      if(msg.indexOf('Not found')>=0||msg.indexOf('not found')>=0){console.debug('QRZ: not found:',call);return;}
-      console.warn('QRZ lookup disabled:',msg);qrzAvailable=false;
-    });
+    }).catch(function(err){handleQrzError(err,call);});
   });
 }
 function testQrzCreds(){
