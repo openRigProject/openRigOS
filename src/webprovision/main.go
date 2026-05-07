@@ -2022,7 +2022,6 @@ var heardMap=null;
 var heardMarker=null;      // single pin — always the latest (or pinned) callsign
 var heardCallsignInfo={};  // call -> QRZ info
 var pinnedCallsign=null;   // null = auto-follow latest
-var lastFlyCallsign=null;  // track last callsign we flew to; skip fly if unchanged
 
 // In-memory tile cache: URL -> blob object URL (survives network blips, avoids re-fetching)
 var _tileCache={};
@@ -2097,9 +2096,7 @@ function updateMapPin(info,fly){
       heardMap.flyTo([info.lat,info.lon],6,{duration:1.5});
     });
   }
-  // Only fly when the callsign actually changes — prevents bouncing when two
-  // stations are QSOing and alternating at the top of the last-heard list.
-  if(fly&&call!==lastFlyCallsign){lastFlyCallsign=call;heardMap.flyTo([info.lat,info.lon],6,{duration:1.5});}
+  if(fly)heardMap.flyTo([info.lat,info.lon],6,{duration:1.5});
 }
 function showHeardDetail(info){
   var d=document.getElementById('heard-detail');
