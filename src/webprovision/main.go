@@ -2038,9 +2038,9 @@ function initHeardMap(){
   tl.addTo(heardMap);
   // clicking the map background unpins
   heardMap.on('click',function(){pinnedCallsign=null;});
-  // Flush layout before Leaflet measures the container — needed when the map
-  // is first created while the panel is already visible.
-  heardMap.invalidateSize();
+  // Defer invalidateSize to the next animation frame so the CSS grid has
+  // resolved column widths and the container reports a non-zero size.
+  requestAnimationFrame(function(){heardMap.invalidateSize();});
 }
 function updateMapPin(info,fly){
   if(!heardMap||!info||!info.lat||!info.lon)return;
@@ -2349,11 +2349,14 @@ function lookupPendingHeardEntries(){
     if(i>=bestIdx)return; // a more-recent entry already owns the map
     bestIdx=i;
     initHeardMap();
-    // Ensure Leaflet knows the container size before flying to the pin location.
-    heardMap.invalidateSize();
     var withOrig=Object.assign({},info,{heardAs:origCall});
-    updateMapPin(withOrig,true);
     showHeardDetail(withOrig);
+    // Defer invalidateSize + flyTo to the next animation frame so CSS grid
+    // column widths are resolved and the container has a non-zero size.
+    requestAnimationFrame(function(){
+      heardMap.invalidateSize();
+      updateMapPin(withOrig,true);
+    });
   }
   lastHeardEntries.slice(0,20).forEach(function(e,i){
     var call=baseCall(e.callsign);
