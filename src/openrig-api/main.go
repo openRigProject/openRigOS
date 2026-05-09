@@ -799,11 +799,18 @@ func buildHotspotConfig(cfg map[string]any) *openrigv1.HotspotConfig {
 		Ysf: func() *openrigv1.YSFConfig {
 			ysfLinkMu.RLock()
 			ls := ysfLinkState
+			liveRef := ysfLiveReflector
 			ysfLinkMu.RUnlock()
+			// Prefer the reflector name observed from live MQTT link events;
+			// fall back to the config value when no live event has arrived yet.
+			reflector := liveRef
+			if reflector == "" {
+				reflector = getString(cfg, "openrig.hotspot.ysf.reflector", "")
+			}
 			return &openrigv1.YSFConfig{
 				Enabled:           getBool(cfg, "openrig.hotspot.ysf.enabled"),
 				Network:           getString(cfg, "openrig.hotspot.ysf.network", "ysf"),
-				Reflector:         getString(cfg, "openrig.hotspot.ysf.reflector", "AMERICA"),
+				Reflector:         reflector,
 				Module:            getString(cfg, "openrig.hotspot.ysf.module", ""),
 				Suffix:            getString(cfg, "openrig.hotspot.ysf.suffix", ""),
 				Description:       getString(cfg, "openrig.hotspot.ysf.description", ""),
@@ -914,8 +921,9 @@ var (
 	pendingMu sync.Mutex
 	pendingTx = map[string]*openrigv1.LastHeardEntry{} // keyed by mode, points into lastHeardEntries
 
-	ysfLinkMu    sync.RWMutex
-	ysfLinkState = "unlinked" // "linking"|"linked"|"unlinked"
+	ysfLinkMu        sync.RWMutex
+	ysfLinkState     = "unlinked" // "linking"|"linked"|"unlinked"
+	ysfLiveReflector = ""         // actual reflector from link MQTT events
 )
 
 // ── BER broadcast for StreamCalibration ──────────────────────────────────
@@ -993,12 +1001,18 @@ func processMQTTPayload(payload []byte) {
 		}
 		if mode == "link" {
 			var lev struct {
-				Action string `json:"action"`
+				Action    string `json:"action"`
+				Reflector string `json:"reflector"`
 			}
 			if err := json.Unmarshal(raw, &lev); err == nil && lev.Action != "" {
 				state := lev.Action // "linking"|"linked"|"unlinked"
 				ysfLinkMu.Lock()
 				ysfLinkState = state
+				if lev.Reflector != "" {
+					ysfLiveReflector = lev.Reflector
+				} else if state == "unlinked" {
+					ysfLiveReflector = ""
+				}
 				ysfLinkMu.Unlock()
 			}
 			continue
