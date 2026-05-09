@@ -1974,7 +1974,8 @@ function makeCombo(id){
   combos[id]={
     populate:function(items,selected,labels){
       allItems=items;allLabels=labels||[];
-      var effective=(selected&&items.indexOf(selected)>=0)?selected:(items.length?items[0]:'');
+      // Show the saved value if provided; only fall back to the first item when there is none.
+      var effective=selected||(items.length?items[0]:'');
       select(effective,false);
     },
     setValue:function(v){select(v,false);}
