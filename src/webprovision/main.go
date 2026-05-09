@@ -1971,12 +1971,14 @@ function makeCombo(id){
       if(opt)select(opt.dataset.value,true);
     });
   }
-  combos[id]={populate:function(items,selected,labels){
-    allItems=items;
-    allLabels=labels||[];
-    var effective=(selected&&items.indexOf(selected)>=0)?selected:(items.length?items[0]:'');
-    select(effective,false);
-  }};
+  combos[id]={
+    populate:function(items,selected,labels){
+      allItems=items;allLabels=labels||[];
+      var effective=(selected&&items.indexOf(selected)>=0)?selected:(items.length?items[0]:'');
+      select(effective,false);
+    },
+    setValue:function(v){select(v,false);}
+  };
 }
 function loadDmrServerList(network,savedValue){
   var inp=document.getElementById('dmr-server-input');
@@ -2021,6 +2023,7 @@ function onYsfNetworkChange(){
 }
 function timeAgo(ts){var d=Math.floor((Date.now()-new Date(ts).getTime())/1000);if(d<60)return d+'s ago';if(d<3600)return Math.floor(d/60)+'m ago';if(d<86400)return Math.floor(d/3600)+'h ago';return Math.floor(d/86400)+'d ago';}
 function baseCall(cs){if(!cs)return cs;if(cs.indexOf('/')>=0)cs=cs.split('/').reduce(function(a,b){return a.length>=b.length?a:b;});var d=cs.indexOf('-');return d>=0?cs.slice(0,d):cs;}
+var lmYsfListLoaded=false;
 var lastHeardEntries=[];
 var heardMap=null;
 var heardMarker=null;      // single pin — always the latest (or pinned) callsign
@@ -2207,8 +2210,9 @@ function loadHotspot(){
     if(yn==='fcs'){document.getElementById('fcs-module').value=d.ysf.module||'A';loadYsfList('fcs','fcs-room',d.ysf.reflector||'');}
     else if(yn==='custom'){document.getElementById('ysf-custom-server').value=d.ysf.reflector||'';}
     else{loadYsfList('ysf','ysf-reflector',d.ysf.reflector||'');}
-    // Link manager dropdowns
-    loadYsfList('ysf','lm-ysf-ref',d.ysf.reflector||'');
+    // Link manager dropdown — load server list once; after that just update the value.
+    if(!lmYsfListLoaded){lmYsfListLoaded=true;loadYsfList('ysf','lm-ysf-ref',d.ysf.reflector||'');}
+    else{var lmInp=document.getElementById('lm-ysf-ref-input');if(combos['lm-ysf-ref']&&document.activeElement!==lmInp)combos['lm-ysf-ref'].setValue(d.ysf.reflector||'');}
     document.getElementById('ysf-description').value=d.ysf.description||'';
     document.getElementById('ysf-wiresx-passthrough').checked=d.ysf.wiresxPassthrough||false;
     document.getElementById('ysf2dmr-enabled').checked=d.crossMode.ysf2dmrEnabled;
