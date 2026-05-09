@@ -2504,8 +2504,8 @@ function renderHotspotStatus(d){
     document.getElementById('hs-net-hdr').textContent='YSF Reflector';
     netEl.textContent=d.ysf.reflector;
     var ls=d.ysf.linkState||'unlinked';
-    // YSFGateway states: "linking"=connected, "relinking"=reconnecting, "unlinked"=down
-    netEl.className='hs-full '+(ls==='linking'?'linked':ls==='relinking'?'linking':'unlinked');
+    // YSFGateway states: "linking"=connected, "relinking"=reconnecting (still linked), "unlinked"=down
+    netEl.className='hs-full '+(ls==='linking'||ls==='relinking'?'linked':'unlinked');
   } else {
     document.getElementById('hs-net-hdr').textContent='Network';
     netEl.textContent='--';
