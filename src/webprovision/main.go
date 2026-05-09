@@ -1460,13 +1460,17 @@ var uiTmpl = template.Must(template.New("ui").Parse(`<!DOCTYPE html>
   .hs-full.linked{background:#14532d;color:#86efac}
   .hs-full.linking{background:#713f12;color:#fde68a}
   .hs-full.unlinked{background:#450a0a;color:#fca5a5}
-  .leaflet-popup-content-wrapper{background:#1e293b;color:#e2e8f0;border:1px solid #334155}
-  .leaflet-popup-tip{background:#1e293b}
+  .maplibregl-popup-content{background:#1e293b;color:#e2e8f0;border:1px solid #334155;padding:8px 12px;border-radius:6px}
+  .maplibregl-popup-anchor-bottom .maplibregl-popup-tip{border-top-color:#1e293b}
+  .maplibregl-popup-anchor-top .maplibregl-popup-tip{border-bottom-color:#1e293b}
+  .maplibregl-popup-anchor-left .maplibregl-popup-tip{border-right-color:#1e293b}
+  .maplibregl-popup-anchor-right .maplibregl-popup-tip{border-left-color:#1e293b}
+  .maplibregl-popup-close-button{color:#94a3b8}
   .map-call-link{color:#38bdf8;font-weight:700;cursor:pointer;text-decoration:none}
   .map-call-link:hover{text-decoration:underline}
 </style>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
 </head>
 <body>
 <div id="conn-warn"><span class="conn-spinner">&#8635;</span>Connection to device lost — reconnecting<span id="conn-warn-count"></span></div>
@@ -1888,7 +1892,7 @@ function showTab(name,e){
   document.getElementById('panel-'+name).classList.add('active');
   if(e&&e.target)e.target.classList.add('active');
   // Leaflet needs a size hint when its container transitions from display:none
-  if(name==='status'&&heardMap)setTimeout(function(){heardMap.invalidateSize();},50);
+  if(name==='status'&&heardMap)setTimeout(function(){heardMap.resize();},50);
 }
 function toast(msg,isError){
   var el=document.getElementById('toast');
@@ -2020,47 +2024,52 @@ function baseCall(cs){if(!cs)return cs;if(cs.indexOf('/')>=0)cs=cs.split('/').re
 var lastHeardEntries=[];
 var heardMap=null;
 var heardMarker=null;      // single pin — always the latest (or pinned) callsign
+var heardMarkerPopup=null; // MapLibre popup attached to heardMarker
+var heardMarkerInfo=null;  // current info for the marker click handler
 var heardCallsignInfo={};  // call -> QRZ info
 var pinnedCallsign=null;   // null = auto-follow latest
 
 function initHeardMap(){
   if(heardMap)return;
-  heardMap=L.map('heard-map',{center:[20,0],zoom:4});
-  var tl=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap contributors',maxZoom:18});
-  tl.on('tileerror',function(ev){
-    // Retry failed tiles up to 3x with backoff (handles transient network blips)
-    var tile=ev.tile;
-    var retries=(tile._retries||0)+1;
-    if(retries>3)return;
-    tile._retries=retries;
-    setTimeout(function(){tile.src=tile.src.split('?')[0]+'?r='+retries;},retries*2000);
+  heardMap=new maplibregl.Map({
+    container:'heard-map',
+    style:{
+      version:8,
+      sources:{osm:{type:'raster',tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],tileSize:256,attribution:'© OpenStreetMap contributors',maxzoom:19}},
+      layers:[{id:'osm',type:'raster',source:'osm'}]
+    },
+    center:[0,20],zoom:4
   });
-  tl.addTo(heardMap);
   // clicking the map background unpins
   heardMap.on('click',function(){pinnedCallsign=null;});
-  // Defer invalidateSize to the next animation frame so the CSS grid has
+  // Defer resize to the next animation frame so the CSS grid has
   // resolved column widths and the container reports a non-zero size.
-  requestAnimationFrame(function(){heardMap.invalidateSize();});
+  requestAnimationFrame(function(){heardMap.resize();});
 }
 function updateMapPin(info,fly){
   if(!heardMap||!info||!info.lat||!info.lon)return;
   var call=info.call;
-  var popup='<a class="map-call-link" href="https://www.qrz.com/db/'+encodeURIComponent(call)+'" target="_blank">'+esc(call)+'</a>'
+  heardMarkerInfo=info;
+  var popupHtml='<a class="map-call-link" href="https://www.qrz.com/db/'+encodeURIComponent(call)+'" target="_blank">'+esc(call)+'</a>'
     +(info.firstName||info.lastName?' <span style="color:#94a3b8">'+esc((info.firstName||'')+' '+(info.lastName||'')).trim()+'</span>':'')
     +(info.city||info.state||info.country?'<br><span style="color:#64748b;font-size:.85rem">'+esc([info.city,info.state,info.country].filter(Boolean).join(', '))+'</span>':'')
     +(info.grid?'<br><span style="color:#64748b;font-size:.85rem">'+esc(info.grid)+'</span>':'');
   if(heardMarker){
-    heardMarker.setLatLng([info.lat,info.lon]).setPopupContent(popup);
+    heardMarker.setLngLat([info.lon,info.lat]);
+    heardMarkerPopup.setHTML(popupHtml);
   } else {
-    heardMarker=L.marker([info.lat,info.lon]).addTo(heardMap).bindPopup(popup);
-    heardMarker.on('click',function(ev){
-      L.DomEvent.stopPropagation(ev);
-      pinnedCallsign=call;
-      showHeardDetail(heardCallsignInfo[call]);
-      heardMap.flyTo([info.lat,info.lon],6,{duration:1.5});
+    heardMarkerPopup=new maplibregl.Popup({closeButton:true,closeOnClick:false}).setHTML(popupHtml);
+    heardMarker=new maplibregl.Marker({color:'#38bdf8'}).setLngLat([info.lon,info.lat]).setPopup(heardMarkerPopup).addTo(heardMap);
+    heardMarker.getElement().addEventListener('click',function(e){
+      e.stopPropagation();
+      var cur=heardMarkerInfo;
+      if(!cur)return;
+      pinnedCallsign=cur.call;
+      showHeardDetail(heardCallsignInfo[cur.call]);
+      heardMap.flyTo({center:[cur.lon,cur.lat],zoom:6,duration:1500});
     });
   }
-  if(fly)heardMap.flyTo([info.lat,info.lon],6,{duration:1.5});
+  if(fly)heardMap.flyTo({center:[info.lon,info.lat],zoom:6,duration:1500});
 }
 function showHeardDetail(info){
   var d=document.getElementById('heard-detail');
@@ -2351,10 +2360,10 @@ function lookupPendingHeardEntries(){
     initHeardMap();
     var withOrig=Object.assign({},info,{heardAs:origCall});
     showHeardDetail(withOrig);
-    // Defer invalidateSize + flyTo to the next animation frame so CSS grid
+    // Defer resize + flyTo to the next animation frame so CSS grid
     // column widths are resolved and the container has a non-zero size.
     requestAnimationFrame(function(){
-      heardMap.invalidateSize();
+      heardMap.resize();
       updateMapPin(withOrig,true);
     });
   }
