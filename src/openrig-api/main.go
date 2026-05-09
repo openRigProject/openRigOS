@@ -1008,8 +1008,8 @@ func processMQTTPayload(payload []byte) {
 				state := lev.Action // "linking"|"linked"|"unlinked"
 				ysfLinkMu.Lock()
 				ysfLinkState = state
-				if lev.Reflector != "" {
-					ysfLiveReflector = lev.Reflector
+				if r := strings.TrimSpace(lev.Reflector); r != "" {
+					ysfLiveReflector = r
 				} else if state == "unlinked" {
 					ysfLiveReflector = ""
 				}
