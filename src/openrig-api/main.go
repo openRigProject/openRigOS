@@ -1945,6 +1945,63 @@ func (s *hotspotServer) StreamLastHeard(ctx context.Context, _ *connect.Request[
 	}
 }
 
+// ── YSF live link/unlink ─────────────────────────────────────────────────
+//
+// These handlers send live MQTT commands to the running YSFGateway without
+// touching openrig.json. Config-level reflector settings are managed via
+// UpdateHotspot on the config tab.
+
+func ysfGatewayCmd(cmd string) error {
+	if err := exec.Command("mosquitto_pub", "-h", "localhost", "-t", "ysf-gateway/command", "-m", cmd).Run(); err != nil {
+		return fmt.Errorf("mosquitto_pub: %w", err)
+	}
+	return nil
+}
+
+// handleLinkYsf handles POST /openrig.v1.HotspotService/LinkYsf
+// Body: {"reflector":"US-KCWIDE"}
+func handleLinkYsf(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Reflector string `json:"reflector"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Reflector == "" {
+		http.Error(w, "reflector required", http.StatusBadRequest)
+		return
+	}
+	if err := ysfGatewayCmd("LinkYSF " + req.Reflector); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ysfLinkMu.Lock()
+	ysfLiveReflector = req.Reflector
+	ysfLinkState = "linking"
+	ysfLinkMu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{}`))
+}
+
+// handleUnlinkYsf handles POST /openrig.v1.HotspotService/UnlinkYsf
+func handleUnlinkYsf(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := ysfGatewayCmd("UnLink"); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ysfLinkMu.Lock()
+	ysfLiveReflector = ""
+	ysfLinkState = "unlinked"
+	ysfLinkMu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{}`))
+}
+
 // ── WifiService ──────────────────────────────────────────────────────────
 
 type wifiServer struct {
@@ -2173,6 +2230,11 @@ func main() {
 	// Register ConnectRPC service handlers
 	path, handler := openrigv1connect.NewDeviceServiceHandler(&deviceServer{})
 	mux.Handle(path, handler)
+
+	// Live YSF link/unlink: registered before the HotspotService handler so
+	// the exact path takes priority over the Connect subtree handler.
+	mux.HandleFunc("/openrig.v1.HotspotService/LinkYsf", handleLinkYsf)
+	mux.HandleFunc("/openrig.v1.HotspotService/UnlinkYsf", handleUnlinkYsf)
 
 	path, handler = openrigv1connect.NewHotspotServiceHandler(&hotspotServer{})
 	mux.Handle(path, handler)
